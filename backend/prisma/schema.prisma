@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         Int      @id @default(autoincrement())
+  telegramId BigInt   @unique
+  firstName  String?
+  lastName   String?
+  username   String?
+  createdAt  DateTime @default(now())
+  habits     Habit[]
+}
+
+model Habit {
+  id        Int          @id @default(autoincrement())
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String       @default("#4CAF50")
+  icon      String?
+  createdAt DateTime     @default(now())
+  archived  Boolean      @default(false)
+  binary    Boolean      @default(false)
+  entries   HabitEntry[]
+  reminder  Reminder?
+
+  @@index([userId])
+}
+
+model Reminder {
+  id            Int       @id @default(autoincrement())
+  habitId       Int       @unique
+  habit         Habit     @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  enabled       Boolean   @default(true)
+  days          String    @default("[\"mon\",\"tue\",\"wed\",\"thu\",\"fri\",\"sat\",\"sun\"]")
+  time          String    @default("09:00")
+  snooze        Boolean   @default(false)
+  lastMessageId Int?
+  lastSentAt    DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+model HabitEntry {
+  id        Int      @id @default(autoincrement())
+  habitId   Int
+  habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  date      DateTime
+  value     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  @@unique([habitId, date])
+  @@index([habitId, date])
+}
