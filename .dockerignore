@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+backend/prisma/*.db
+backend/prisma/*.db-journal
+backend/.env
+frontend/.env*
+**/.DS_Store
+**/*.log
+.git
+.github
