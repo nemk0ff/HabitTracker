@@ -8,6 +8,8 @@ import { habitsRoutes } from './routes/habits.js';
 import { entriesRoutes } from './routes/entries.js';
 import { reminderRoutes } from './routes/reminders.js';
 import { startScheduler } from './services/scheduler.js';
+import { bot, startBot } from './services/bot.js';
+import { startAlerts } from './services/alerts.js';
 const PORT = Number(process.env.PORT) || 3001;
 
 const app = Fastify({ logger: true });
@@ -37,6 +39,7 @@ app.setNotFoundHandler((_request, reply) => {
 });
 
 const shutdown = async () => {
+  await bot.stop();
   await prisma.$disconnect();
   await app.close();
   process.exit(0);
@@ -49,6 +52,8 @@ try {
   await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`Server running on http://localhost:${PORT}`);
   startScheduler();
+  startBot();
+  startAlerts();
 } catch (err) {
   app.log.error(err);
   process.exit(1);

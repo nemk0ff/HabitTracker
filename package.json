@@ -1,0 +1,7 @@
+{
+  "name": "habit-tracker",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs"
+  }
+}
