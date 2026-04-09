@@ -324,6 +324,28 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+async function waitForBackend(timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  const port = parseInt(process.env.PORT || '3001', 10);
+  console.log('[dev] Waiting for backend to be ready...');
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(`http://localhost:${port}/api/health`, { signal: controller.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        console.log('[dev] Backend is ready.');
+        return;
+      }
+    } catch {
+      // not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error('Backend did not become ready within 30 seconds');
+}
+
 async function main() {
   console.log('╔══════════════════════════════════════╗');
   console.log('║    HabitTracker — dev launcher       ║');
@@ -345,10 +367,21 @@ async function main() {
     process.exit(1);
   }
 
+  developerChatId = envVars.DEVELOPER_CHAT_ID || null;
+
   // 2. Build frontend
   buildFrontend();
 
-  // 3. Start tunnel
+  // 3. Start backend with current env so port 3001 is occupied before tunnelmole
+  spawnBackend(envVars);
+  try {
+    await waitForBackend();
+  } catch (err) {
+    console.error('[dev]', err.message);
+    process.exit(1);
+  }
+
+  // 4. Start tunnel (port 3001 is now open — tunnelmole won't exit early)
   let tunnelUrl;
   try {
     const { url } = await spawnTunnel();
@@ -360,23 +393,25 @@ async function main() {
     process.exit(1);
   }
 
-  // 4. Update .env with tunnel URL
+  // 5. Update .env with tunnel URL
   await updateEnvKey(ENV_PATH, 'WEBAPP_URL', tunnelUrl);
 
-  developerChatId = envVars.DEVELOPER_CHAT_ID || null;
-
-  // 5. Configure Telegram menu button
+  // 6. Configure Telegram menu button
   await setTelegramMenuButton(envVars.BOT_TOKEN, tunnelUrl);
 
-  // 6. Print Main App instructions + notify developer
+  // 7. Print Main App instructions + notify developer
   printMainAppInstructions(tunnelUrl);
   await notifyDeveloper(envVars.BOT_TOKEN, developerChatId, tunnelUrl);
 
-  // 7. Start backend with fresh env (includes new WEBAPP_URL)
+  // 8. Restart backend so it picks up the new WEBAPP_URL from .env
+  console.log('\n[dev] Restarting backend with updated WEBAPP_URL...');
+  backendProcess.removeAllListeners('exit');
+  backendProcess.kill('SIGTERM');
+  backendProcess = null;
   const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
   spawnBackend(freshEnv);
 
-  // 8. Start health monitor
+  // 9. Start health monitor
   startHealthMonitor();
 
   console.log('\n[dev] Running. Health check every 2 minutes. Ctrl+C to stop.\n');
