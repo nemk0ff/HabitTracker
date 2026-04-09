@@ -1,6 +1,6 @@
 # Habit Tracker — Telegram Mini App
 
-Трекер привычек в формате Telegram Mini App. GitHub-style heatmap, стрики, 4 уровня интенсивности (или бинарный режим), напоминания с повтором, haptic feedback, адаптация к теме Telegram.
+Трекер привычек в формате Telegram Mini App. GitHub-style heatmap, стрики, 4 уровня интенсивности (или бинарный режим), напоминания с повтором, ежедневная аналитика, haptic feedback, адаптация к теме Telegram.
 
 ## Стек
 
@@ -61,15 +61,32 @@ Prisma ORM → SQLite / PostgreSQL
 3. Отправляет Telegram-сообщение через grammY
 4. При включённом `snooze`: повторяет каждые 5 минут в течение часа, пока привычка не отмечена; удаляет предыдущее сообщение перед отправкой нового
 
+### Аналитика и мониторинг
+
+Все действия пользователей пишутся в таблицу `AnalyticsEvent` (fire-and-forget, никогда не блокирует API):
+
+| Событие | Триггер |
+|---|---|
+| `user_registered` / `app_open` | Каждый `/api/auth` |
+| `habit_created/edited/deleted` | CRUD привычек |
+| `entry_checked` / `entry_unchecked` | Отметка привычки |
+| `reminder_enabled/disabled/deleted` | Настройка напоминания |
+| `command_start` / `command_help` / `message_received` | Сообщения боту |
+
+**Ежедневный отчёт** приходит в личку разработчика в 09:00 UTC (DAU, WAU, новые пользователи, топ-действия).  
+**Команда `/stats`** (только для `DEVELOPER_CHAT_ID`) — статистика в реальном времени.
+
 ---
 
 ## Структура проекта
 
 ```
 HabitTracker/
+├── scripts/
+│   └── dev.mjs                    # Одна команда запуска: сборка + туннель + бэкенд
 ├── backend/
 │   ├── prisma/
-│   │   └── schema.prisma          # User, Habit, HabitEntry, Reminder
+│   │   └── schema.prisma          # User, Habit, HabitEntry, Reminder, AnalyticsEvent
 │   ├── public/                    # Собранный фронтенд (vite build output)
 │   │   └── assets/
 │   └── src/
@@ -83,8 +100,10 @@ HabitTracker/
 │       │   ├── entries.ts         # POST /api/habits/:id/entries (upsert/delete)
 │       │   └── reminders.ts       # GET/PUT/DELETE /api/habits/:id/reminder
 │       ├── services/
-│       │   ├── bot.ts             # grammY Bot instance
-│       │   └── scheduler.ts       # node-cron, snooze логика
+│       │   ├── bot.ts             # grammY Bot: /start, /help, /stats, on('message')
+│       │   ├── scheduler.ts       # node-cron: напоминания + snooze каждую минуту
+│       │   ├── analytics.ts       # track() (fire-and-forget) + агрегаты DAU/WAU
+│       │   └── alerts.ts          # Ежедневный отчёт + sendQuickStats()
 │       └── utils/
 │           └── telegram.ts        # validateInitData (HMAC проверка)
 │
@@ -125,10 +144,11 @@ HabitTracker/
 ## База данных
 
 ```prisma
-User         — telegramId (BigInt, unique)
-Habit        — userId, name, color, icon?, binary, archived
-HabitEntry   — habitId + date (уникальный составной ключ), value 1–4
-Reminder     — habitId (1:1), days (JSON), time "HH:MM" UTC, snooze, lastMessageId
+User            — telegramId (BigInt, unique)
+Habit           — userId, name, color, icon?, binary, archived
+HabitEntry      — habitId + date (уникальный составной ключ), value 1–4
+Reminder        — habitId (1:1), days (JSON), time "HH:MM" UTC, snooze, lastMessageId
+AnalyticsEvent  — userId?, event, category, label?, metadata (JSON), createdAt
 ```
 
 ---
@@ -139,6 +159,7 @@ Reminder     — habitId (1:1), days (JSON), time "HH:MM" UTC, snooze, lastMessa
 
 - Node.js 18+
 - Telegram Bot Token (через [@BotFather](https://t.me/BotFather))
+- [Tunnelmole](https://tunnelmole.com) (`npm install -g tunnelmole` или через `npx`)
 
 ### Установка
 
@@ -156,6 +177,7 @@ DATABASE_URL="file:./prisma/dev.db"
 BOT_TOKEN="ваш_токен_бота"
 JWT_SECRET="случайная_строка"
 PORT=3001
+DEVELOPER_CHAT_ID="ваш_telegram_id"   # опционально: ID для отчётов и /stats
 ```
 
 ### База данных
@@ -165,13 +187,29 @@ cd backend
 npx prisma db push
 ```
 
-### Запуск
+### Запуск (одной командой)
+
+```bash
+npm run dev   # из корня проекта
+```
+
+Скрипт автоматически:
+1. Собирает фронтенд (`frontend/` → `backend/public/`)
+2. Запускает туннель Tunnelmole на порту 3001
+3. Записывает новый URL в `backend/.env` (`WEBAPP_URL`)
+4. Обновляет кнопку меню бота в Telegram
+5. Запускает бэкенд с актуальными env-переменными
+6. Каждые 2 минуты проверяет работоспособность туннеля; при сбое — автоматически заменяет и перезапускает всё
+
+Если `DEVELOPER_CHAT_ID` задан, при каждом изменении URL бот пришлёт вам сообщение с новой ссылкой.
+
+### Альтернативный запуск (два терминала)
 
 ```bash
 # Терминал 1 — Backend
 cd backend && npm run dev
 
-# Терминал 2 — Frontend (dev server)
+# Терминал 2 — Frontend dev server
 cd frontend && npm run dev
 ```
 
@@ -187,9 +225,13 @@ cd ../backend && npm start     # отдаёт и API, и статику
 
 Настройте Mini App URL через [@BotFather](https://t.me/BotFather): Bot Settings → Menu Button → URL вашего бэкенда.
 
-Для локальной разработки с Telegram используйте HTTPS-туннель (например, [Tunnelmole](https://tunnelmole.com)):
+---
 
-```bash
-npx tunnelmole 3001
-# → получите https://xxx.tunnelmole.net, передайте его в BotFather
-```
+## Деплой в продакшен
+
+В репозитории есть задел:
+
+- **`Dockerfile`** — многостадийная сборка: фронт → `backend/public/`, Prisma generate, `node dist/index.js`, порт 3001
+- **`fly.toml`** — пример для [Fly.io](https://fly.io) (регион `ams`, том под SQLite `/data`)
+
+Для продакшена замените `DATABASE_URL` на PostgreSQL и выставьте постоянный HTTPS-домен.
