@@ -76,7 +76,7 @@ function buildFrontend() {
   console.log('[dev] Frontend built successfully.');
 }
 
-// ─── Tunnel ───────────────────────────────────────────────────────────────────
+// ─── Tunnel ──────────────────────────────────────────────────────────────────
 
 function spawnTunnel() {
   return new Promise((resolve, reject) => {
@@ -284,6 +284,7 @@ async function handleTunnelFailure() {
     backendProcess.removeAllListeners('exit');
     backendProcess.kill('SIGTERM');
     backendProcess = null;
+    await waitForPortFree(Number(envVars.PORT || 3001));
   }
 
   const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
@@ -346,6 +347,21 @@ async function waitForBackend(timeoutMs = 30_000) {
   throw new Error('Backend did not become ready within 30 seconds');
 }
 
+async function waitForPortFree(port, timeoutMs = 10_000) {
+  const { createServer } = await import('net');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const free = await new Promise((res) => {
+      const s = createServer();
+      s.once('error', () => res(false));
+      s.once('listening', () => { s.close(); res(true); });
+      s.listen(port, '127.0.0.1');
+    });
+    if (free) return;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
 async function main() {
   console.log('╔══════════════════════════════════════╗');
   console.log('║    HabitTracker — dev launcher       ║');
@@ -369,10 +385,17 @@ async function main() {
 
   developerChatId = envVars.DEVELOPER_CHAT_ID || null;
 
-  // 2. Build frontend
+  // 2. Stop any pm2-managed backend to avoid port conflicts
+  try {
+    const { spawnSync: ss } = await import('child_process');
+    const r = ss('pm2', ['delete', 'habit-backend'], { shell: true, stdio: 'pipe' });
+    if (r.status === 0) console.log('[dev] Stopped pm2 habit-backend.');
+  } catch { /* pm2 not installed or process not found — ok */ }
+
+  // 3. Build frontend
   buildFrontend();
 
-  // 3. Start backend with current env so port 3001 is occupied before tunnelmole
+  // 4. Start backend with current env so port 3001 is occupied before tunnelmole
   spawnBackend(envVars);
   try {
     await waitForBackend();
@@ -381,7 +404,7 @@ async function main() {
     process.exit(1);
   }
 
-  // 4. Start tunnel (port 3001 is now open — tunnelmole won't exit early)
+  // 5. Start tunnel (port 3001 is now open — tunnelmole won't exit early)
   let tunnelUrl;
   try {
     const { url } = await spawnTunnel();
@@ -393,25 +416,27 @@ async function main() {
     process.exit(1);
   }
 
-  // 5. Update .env with tunnel URL
+  // 6. Update .env with tunnel URL
   await updateEnvKey(ENV_PATH, 'WEBAPP_URL', tunnelUrl);
 
-  // 6. Configure Telegram menu button
+  // 7. Configure Telegram menu button
   await setTelegramMenuButton(envVars.BOT_TOKEN, tunnelUrl);
 
-  // 7. Print Main App instructions + notify developer
+  // 8. Print Main App instructions + notify developer
   printMainAppInstructions(tunnelUrl);
   await notifyDeveloper(envVars.BOT_TOKEN, developerChatId, tunnelUrl);
 
-  // 8. Restart backend so it picks up the new WEBAPP_URL from .env
+  // 9. Restart backend so it picks up the new WEBAPP_URL from .env
   console.log('\n[dev] Restarting backend with updated WEBAPP_URL...');
   backendProcess.removeAllListeners('exit');
   backendProcess.kill('SIGTERM');
   backendProcess = null;
+  const port = parseInt(envVars.PORT || '3001', 10);
+  await waitForPortFree(port);
   const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
   spawnBackend(freshEnv);
 
-  // 9. Start health monitor
+  // 10. Start health monitor
   startHealthMonitor();
 
   console.log('\n[dev] Running. Health check every 2 minutes. Ctrl+C to stop.\n');
