@@ -209,9 +209,12 @@ function spawnBackend(envVars) {
   const proc = spawn('npm', ['run', 'dev'], {
     cwd: resolve(ROOT, 'backend'),
     shell: true,
-    stdio: 'inherit',
+    // pipe to parent stdio while keeping detached (so we can kill the whole group)
+    stdio: ['ignore', process.stdout, process.stderr],
     env: { ...process.env, ...envVars },
+    detached: true,  // child becomes process group leader → kill(-pid) kills entire tree
   });
+  proc.unref(); // don't prevent dev.mjs event loop from exiting on its own
   proc.on('exit', (code) => {
     if (!isShuttingDown && code !== null && code !== 0) {
       console.error(`[dev] Backend exited with code ${code}`);
@@ -219,6 +222,17 @@ function spawnBackend(envVars) {
   });
   backendProcess = proc;
   return proc;
+}
+
+function killBackend() {
+  if (!backendProcess) return;
+  backendProcess.removeAllListeners('exit');
+  try {
+    process.kill(-backendProcess.pid, 'SIGTERM'); // kill entire process group (tsx, node, etc.)
+  } catch {
+    backendProcess.kill('SIGTERM');
+  }
+  backendProcess = null;
 }
 
 function printMainAppInstructions(webAppUrl) {
@@ -280,13 +294,8 @@ async function handleTunnelFailure() {
   await notifyDeveloper(envVars.BOT_TOKEN, developerChatId, newUrl);
 
   // Restart backend with new env
-  if (backendProcess) {
-    backendProcess.removeAllListeners('exit');
-    backendProcess.kill('SIGTERM');
-    backendProcess = null;
-    await waitForPortFree(Number(envVars.PORT || 3001));
-  }
-
+  killBackend();
+  await waitForPortFree(Number(envVars.PORT || 3001));
   const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
   spawnBackend(freshEnv);
 
@@ -312,7 +321,7 @@ function shutdown(signal) {
   isShuttingDown = true;
   console.log(`\n[dev] Received ${signal}. Shutting down...`);
   if (healthCheckTimer) clearInterval(healthCheckTimer);
-  if (backendProcess) backendProcess.kill('SIGTERM');
+  killBackend();
   if (tunnelProcess) {
     tunnelProcess.removeAllListeners('exit');
     tunnelProcess.kill('SIGTERM');
@@ -428,11 +437,8 @@ async function main() {
 
   // 9. Restart backend so it picks up the new WEBAPP_URL from .env
   console.log('\n[dev] Restarting backend with updated WEBAPP_URL...');
-  backendProcess.removeAllListeners('exit');
-  backendProcess.kill('SIGTERM');
-  backendProcess = null;
-  const port = parseInt(envVars.PORT || '3001', 10);
-  await waitForPortFree(port);
+  killBackend();
+  await waitForPortFree(parseInt(envVars.PORT || '3001', 10));
   const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
   spawnBackend(freshEnv);
 
