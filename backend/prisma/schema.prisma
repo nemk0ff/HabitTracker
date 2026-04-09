@@ -8,13 +8,31 @@ datasource db {
 }
 
 model User {
-  id         Int      @id @default(autoincrement())
-  telegramId BigInt   @unique
+  id         Int              @id @default(autoincrement())
+  telegramId BigInt           @unique
   firstName  String?
   lastName   String?
   username   String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime         @default(now())
   habits     Habit[]
+  events     AnalyticsEvent[]
+}
+
+model AnalyticsEvent {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  event     String
+  category  String
+  label     String?
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([event])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([event, createdAt])
 }
 
 model Habit {

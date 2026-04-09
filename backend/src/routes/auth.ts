@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { validateInitData } from '../utils/telegram.js';
 import { signToken } from '../middleware/auth.js';
+import { track } from '../services/analytics.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -25,6 +26,10 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Invalid initData' });
     }
 
+    const existing = await prisma.user.findUnique({
+      where: { telegramId: BigInt(telegramUser.id) },
+    });
+
     const user = await prisma.user.upsert({
       where: { telegramId: BigInt(telegramUser.id) },
       update: {
@@ -38,6 +43,12 @@ export async function authRoutes(app: FastifyInstance) {
         lastName: telegramUser.last_name ?? null,
         username: telegramUser.username ?? null,
       },
+    });
+
+    track({
+      userId: user.id,
+      event: existing ? 'app_open' : 'user_registered',
+      category: 'miniapp',
     });
 
     const token = signToken({

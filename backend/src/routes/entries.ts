@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { authGuard, JwtPayload } from '../middleware/auth.js';
+import { track } from '../services/analytics.js';
 
 export async function entriesRoutes(app: FastifyInstance) {
   app.addHook('onRequest', authGuard);
@@ -30,6 +31,7 @@ export async function entriesRoutes(app: FastifyInstance) {
         await prisma.habitEntry.deleteMany({
           where: { habitId, date: entryDate },
         });
+        track({ userId, event: 'entry_unchecked', category: 'miniapp', label: date });
         return { deleted: true, date };
       }
 
@@ -37,6 +39,14 @@ export async function entriesRoutes(app: FastifyInstance) {
         where: { habitId_date: { habitId, date: entryDate } },
         update: { value: entryValue },
         create: { habitId, date: entryDate, value: entryValue },
+      });
+
+      track({
+        userId,
+        event: 'entry_checked',
+        category: 'miniapp',
+        label: date,
+        metadata: { value: entryValue, habitId },
       });
 
       return {

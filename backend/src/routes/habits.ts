@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { authGuard, JwtPayload } from '../middleware/auth.js';
+import { track } from '../services/analytics.js';
 
 export async function habitsRoutes(app: FastifyInstance) {
   app.addHook('onRequest', authGuard);
@@ -58,6 +59,14 @@ export async function habitsRoutes(app: FastifyInstance) {
         },
       });
 
+      track({
+        userId,
+        event: 'habit_created',
+        category: 'miniapp',
+        label: habit.name,
+        metadata: { color: habit.color, binary: habit.binary },
+      });
+
       return {
         id: habit.id,
         name: habit.name,
@@ -94,6 +103,8 @@ export async function habitsRoutes(app: FastifyInstance) {
         },
       });
 
+      track({ userId, event: 'habit_edited', category: 'miniapp', label: habit.name });
+
       return {
         id: habit.id,
         name: habit.name,
@@ -116,6 +127,7 @@ export async function habitsRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Habit not found' });
     }
 
+    track({ userId, event: 'habit_deleted', category: 'miniapp', label: existing.name });
     await prisma.habit.delete({ where: { id: habitId } });
 
     return { success: true };

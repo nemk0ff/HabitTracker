@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { authGuard, JwtPayload } from '../middleware/auth.js';
+import { track } from '../services/analytics.js';
 
 const VALID_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const TIME_RE = /^\d{2}:\d{2}$/;
@@ -71,6 +72,13 @@ export async function reminderRoutes(app: FastifyInstance) {
         },
       });
 
+      track({
+        userId,
+        event: enabled ? 'reminder_enabled' : 'reminder_disabled',
+        category: 'reminder',
+        metadata: { time, snooze, days: days.length },
+      });
+
       return {
         id: reminder.id,
         habitId: reminder.habitId,
@@ -92,6 +100,7 @@ export async function reminderRoutes(app: FastifyInstance) {
       if (!habit) return reply.status(404).send({ error: 'Habit not found' });
 
       await prisma.reminder.deleteMany({ where: { habitId } });
+      track({ userId, event: 'reminder_deleted', category: 'reminder' });
       return { success: true };
     },
   );
