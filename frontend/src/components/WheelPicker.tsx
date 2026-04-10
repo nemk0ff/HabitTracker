@@ -48,36 +48,19 @@ export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCo
   };
 
   const fadeStop = `${((itemHeight / containerHeight) * 100).toFixed(1)}%`;
+  const fadeMask = `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`;
 
   return (
-    <div
-      className="relative"
-      style={{
-        height: containerHeight,
-        WebkitMaskImage: `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`,
-        maskImage: `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`,
-      }}
-    >
-      {/* Selection highlight — z-0 so scrollable text renders above it */}
-      <div
-        className="absolute left-0 right-0 pointer-events-none rounded-lg"
-        style={{
-          top: padding,
-          height: itemHeight,
-          zIndex: 0,
-          backgroundColor: 'var(--tg-theme-secondary-bg-color, rgba(120,120,128,0.12))',
-        }}
-      />
-
-      {/* Scrollable area — z-10 so items render above the highlight */}
+    <div className="relative" style={{ height: containerHeight, overflow: 'hidden' }}>
+      {/* Scrollable area — mask applied here directly so it works inside the compositor layer */}
       <div
         ref={containerRef}
         className="absolute inset-0 overflow-y-scroll"
         style={{
-          zIndex: 10,
           scrollSnapType: 'y mandatory',
-          WebkitOverflowScrolling: 'touch',
           scrollbarWidth: 'none',
+          WebkitMaskImage: fadeMask,
+          maskImage: fadeMask,
         }}
         onScroll={handleScroll}
       >
@@ -102,6 +85,17 @@ export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCo
         {/* Bottom padding */}
         <div style={{ height: padding }} />
       </div>
+
+      {/* Selection indicator: top/bottom lines only, no background fill */}
+      <div
+        className="absolute left-2 right-2 pointer-events-none"
+        style={{
+          top: padding,
+          height: itemHeight,
+          borderTop: '1px solid rgba(128,128,128,0.35)',
+          borderBottom: '1px solid rgba(128,128,128,0.35)',
+        }}
+      />
     </div>
   );
 }
