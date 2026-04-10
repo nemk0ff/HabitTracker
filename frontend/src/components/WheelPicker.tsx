@@ -47,8 +47,17 @@ export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCo
     }, 80);
   };
 
+  const fadeStop = `${((itemHeight / containerHeight) * 100).toFixed(1)}%`;
+
   return (
-    <div className="relative" style={{ height: containerHeight }}>
+    <div
+      className="relative"
+      style={{
+        height: containerHeight,
+        WebkitMaskImage: `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`,
+        maskImage: `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`,
+      }}
+    >
       {/* Selection highlight */}
       <div
         className="absolute left-0 right-0 pointer-events-none rounded-lg z-10"
@@ -56,20 +65,6 @@ export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCo
           top: padding,
           height: itemHeight,
           backgroundColor: 'var(--tg-theme-secondary-bg-color, rgba(120,120,128,0.12))',
-        }}
-      />
-
-      {/* Gradient masks */}
-      <div
-        className="absolute inset-0 pointer-events-none z-20"
-        style={{
-          background: `linear-gradient(
-            to bottom,
-            var(--tg-theme-bg-color, #fff) 0%,
-            transparent 35%,
-            transparent 65%,
-            var(--tg-theme-bg-color, #fff) 100%
-          )`,
         }}
       />
 
