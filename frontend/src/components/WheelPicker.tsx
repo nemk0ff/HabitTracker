@@ -58,21 +58,23 @@ export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCo
         maskImage: `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`,
       }}
     >
-      {/* Selection highlight */}
+      {/* Selection highlight — z-0 so scrollable text renders above it */}
       <div
-        className="absolute left-0 right-0 pointer-events-none rounded-lg z-10"
+        className="absolute left-0 right-0 pointer-events-none rounded-lg"
         style={{
           top: padding,
           height: itemHeight,
+          zIndex: 0,
           backgroundColor: 'var(--tg-theme-secondary-bg-color, rgba(120,120,128,0.12))',
         }}
       />
 
-      {/* Scrollable area */}
+      {/* Scrollable area — z-10 so items render above the highlight */}
       <div
         ref={containerRef}
         className="absolute inset-0 overflow-y-scroll"
         style={{
+          zIndex: 10,
           scrollSnapType: 'y mandatory',
           WebkitOverflowScrolling: 'touch',
           scrollbarWidth: 'none',
