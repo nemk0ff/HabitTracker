@@ -3,6 +3,7 @@ import { createInterface } from 'readline';
 import { readFile, writeFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { resolve, dirname } from 'path';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -20,6 +21,44 @@ let currentTunnelUrl = null;
 let developerChatId = null;
 let isShuttingDown = false;
 let isHandlingFailure = false;
+
+// Proxy-aware POST for Telegram API calls (api.telegram.org may be blocked on some hosts).
+// Reads SOCKS_PROXY from process.env at call time (set from .env before first use).
+async function tgPost(url, body) {
+  const socksProxy = process.env.SOCKS_PROXY || '';
+  if (socksProxy) {
+    const { request } = await import('https');
+    const agent = new SocksProxyAgent(socksProxy);
+    const parsed = new URL(url);
+    const bodyStr = JSON.stringify(body);
+    return new Promise((resolve, reject) => {
+      const req = request(
+        {
+          hostname: parsed.hostname,
+          path: parsed.pathname,
+          method: 'POST',
+          port: 443,
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+          agent,
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+        },
+      );
+      req.on('error', reject);
+      req.write(bodyStr);
+      req.end();
+    });
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
 
 // ─── .env helpers ────────────────────────────────────────────────────────────
 
@@ -142,13 +181,7 @@ async function setChatMenuButtonRequest(botToken, webAppUrl, chatId) {
     },
   };
   if (chatId) body.chat_id = Number(chatId);
-
-  const res = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+  return tgPost(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, body);
 }
 
 async function setTelegramMenuButton(botToken, webAppUrl) {
@@ -186,15 +219,11 @@ async function notifyDeveloper(botToken, developerChatId, webAppUrl) {
       `<code>${webAppUrl}</code>\n\n` +
       `Вставь ссылку в BotFather → Main App:\n` +
       `<a href="https://t.me/BotFather">Открыть BotFather</a> → /mybots → Edit Bot → Mini App URL`;
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: developerChatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
+    await tgPost(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      chat_id: developerChatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
     });
     console.log(`[telegram] Notification sent to developer (${developerChatId})`);
   } catch (err) {
@@ -393,6 +422,9 @@ async function main() {
   }
 
   developerChatId = envVars.DEVELOPER_CHAT_ID || null;
+
+  // Apply SOCKS_PROXY to this process so tgPost() can use it
+  if (envVars.SOCKS_PROXY) process.env.SOCKS_PROXY = envVars.SOCKS_PROXY;
 
   // 2. Stop any pm2-managed backend to avoid port conflicts
   try {

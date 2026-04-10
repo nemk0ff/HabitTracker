@@ -1,12 +1,21 @@
 import { Bot } from 'grammy';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 import { prisma } from '../db.js';
 import { track } from './analytics.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const WEBAPP_URL = process.env.WEBAPP_URL || '';
 const DEVELOPER_CHAT_ID = process.env.DEVELOPER_CHAT_ID || '';
+const SOCKS_PROXY = process.env.SOCKS_PROXY || '';
 
-export const bot = new Bot(BOT_TOKEN);
+const botOptions: ConstructorParameters<typeof Bot>[1] = {};
+if (SOCKS_PROXY) {
+  const agent = new SocksProxyAgent(SOCKS_PROXY);
+  botOptions.client = { baseFetchConfig: { agent, compress: true } };
+  console.log(`[bot] Using SOCKS proxy: ${SOCKS_PROXY}`);
+}
+
+export const bot = new Bot(BOT_TOKEN, botOptions);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

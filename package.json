@@ -3,5 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.mjs"
+  },
+  "dependencies": {
+    "socks-proxy-agent": "^10.0.0"
   }
 }

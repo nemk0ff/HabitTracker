@@ -41,6 +41,7 @@ JWT_SECRET="random_secret_key"
 PORT=3001
 WEBAPP_URL="https://your-domain.com"  # auto-set by dev.mjs; used for menu button + /start button
 DEVELOPER_CHAT_ID="your_telegram_id"  # if set: receives daily reports, tunnel URL on restart, /stats command
+SOCKS_PROXY="socks5://127.0.0.1:1080" # optional: SOCKS5 proxy for Telegram API (needed if api.telegram.org is blocked by the host)
 ```
 
 Frontend uses `VITE_API_URL` (optional) — defaults to empty string so API calls go to the same origin (works when backend serves the built frontend).
@@ -74,6 +75,8 @@ ESM Node.js script that acts as a process supervisor for local development:
 Module-level variables track `tunnelProcess`, `backendProcess`, `healthCheckTimer` to enable clean shutdown on SIGINT/SIGTERM.
 
 **Windows path note:** Uses `fileURLToPath(new URL(..., import.meta.url))` for cross-platform path resolution.
+
+**SOCKS proxy note:** If `SOCKS_PROXY` is set in `backend/.env`, dev.mjs applies it to `process.env` at startup so all Telegram API calls (`setChatMenuButton`, `sendMessage`) route through the proxy via `socks-proxy-agent`. Needed on hosts where `api.telegram.org` is blocked (e.g. VPS providers that share Telegram's IP range `149.154.0.0/16`).
 
 ### Reminder Scheduler
 `startScheduler()` runs a `node-cron` job every minute (UTC). It checks for reminders matching current UTC time and day, sends Telegram messages via `bot.api.sendMessage`, and handles snooze (re-sends every 5 min for up to 1 hour if the habit isn't checked).
