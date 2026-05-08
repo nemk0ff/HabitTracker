@@ -96,7 +96,7 @@ export function HabitFormPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Например: Медитация"
-            maxLength={50}
+            maxLength={20}
             autoFocus
             className="w-full px-4 py-3 rounded-xl bg-tg-section text-tg-text placeholder:text-tg-hint text-base outline-none focus:ring-2 focus:ring-tg-button/30 transition-shadow"
           />

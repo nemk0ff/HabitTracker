@@ -20,11 +20,21 @@ export function HabitCard({ habit }: Props) {
   const [weeks, setWeeks] = useState(18);
 
   useLayoutEffect(() => {
-    if (!heatmapRef.current) return;
-    const w = heatmapRef.current.offsetWidth;
+    const el = heatmapRef.current;
+    if (!el) return;
     // each week column = cellSize(11) + gap(3) = 14px, last column has no trailing gap
     // total width = N*14 - 3 → N = floor((w + 3) / 14)
-    setWeeks(Math.max(4, Math.floor((w + 3) / 14)));
+    const update = (w: number) => {
+      setWeeks(Math.max(4, Math.floor((w + 3) / 14)));
+    };
+    update(el.offsetWidth);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        update(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   const handleCheck = (e: React.MouseEvent) => {
@@ -56,8 +66,8 @@ export function HabitCard({ habit }: Props) {
           />
         </div>
 
-        {/* Right column — fixed width, anchored to right edge */}
-        <div className="w-14 shrink-0 flex flex-col justify-between items-start">
+        {/* Right column — width adapts to habit name (min 56px, max ~160px) */}
+        <div className="shrink-0 flex flex-col justify-between items-start min-w-14 max-w-[160px] w-fit">
           {/* Checkbox */}
           <button
             onClick={handleCheck}
@@ -81,11 +91,11 @@ export function HabitCard({ habit }: Props) {
           </button>
 
           {/* Icon + name */}
-          <div className="w-full min-w-0">
+          <div className="w-full">
             {habit.icon && (
               <span className="text-base leading-none block mb-0.5">{habit.icon}</span>
             )}
-            <span className="font-semibold text-tg-text text-xs leading-tight truncate block">
+            <span className="font-semibold text-tg-text text-xs leading-tight block whitespace-nowrap overflow-hidden text-ellipsis">
               {habit.name}
             </span>
           </div>

@@ -45,14 +45,18 @@ export async function habitsRoutes(app: FastifyInstance) {
       const { userId } = (request as any).user as JwtPayload;
       const { name, color, icon, binary } = request.body;
 
-      if (!name?.trim()) {
+      const trimmedName = name?.trim();
+      if (!trimmedName) {
         return reply.status(400).send({ error: 'Name is required' });
+      }
+      if (trimmedName.length > 20) {
+        return reply.status(400).send({ error: 'Name must be 20 characters or fewer' });
       }
 
       const habit = await prisma.habit.create({
         data: {
           userId,
-          name: name.trim(),
+          name: trimmedName,
           color: color || '#4CAF50',
           icon: icon || null,
           binary: binary ?? false,
@@ -93,10 +97,14 @@ export async function habitsRoutes(app: FastifyInstance) {
       }
 
       const { name, color, icon, binary } = request.body;
+      const trimmedName = name?.trim();
+      if (trimmedName !== undefined && trimmedName.length > 20) {
+        return reply.status(400).send({ error: 'Name must be 20 characters or fewer' });
+      }
       const habit = await prisma.habit.update({
         where: { id: habitId },
         data: {
-          ...(name !== undefined && { name: name.trim() }),
+          ...(trimmedName !== undefined && { name: trimmedName }),
           ...(color !== undefined && { color }),
           ...(icon !== undefined && { icon }),
           ...(binary !== undefined && { binary }),
