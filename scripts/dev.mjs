@@ -1,5 +1,15 @@
+// HabitTracker dev launcher — CloudPub edition.
+//
+// CloudPub exposes the backend on a STABLE https://<name>.cloudpub.ru subdomain, so the
+// old localtunnel/tunnelmole URL-rotation + health-monitor machinery is gone. This script:
+//   1. discovers (or registers) the CloudPub publication for port 3001,
+//   2. writes its URL into backend/.env (WEBAPP_URL),
+//   3. builds the frontend and starts the backend,
+//   4. points the Telegram menu button at the URL once.
+//
+// `clo` (the CloudPub agent) must be installed and logged in for steps 1/2. If it isn't,
+// the script still builds + runs the backend and just prints manual instructions.
 import { spawn, spawnSync } from 'child_process';
-import { createInterface } from 'readline';
 import { readFile, writeFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { resolve, dirname } from 'path';
@@ -8,19 +18,12 @@ import { SocksProxyAgent } from 'socks-proxy-agent';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const ENV_PATH = resolve(ROOT, 'backend', '.env');
+const PORT = parseInt(process.env.PORT || '3001', 10);
+const PUB_NAME = 'habit-tracker'; // CloudPub publication name
 
-const TUNNEL_URL_REGEX = /https:\/\/[a-zA-Z0-9\-\.]+\.tunnelmole\.net/i;
-const TUNNEL_TIMEOUT_MS = 60_000;
-const HEALTH_INTERVAL_MS = 2 * 60 * 1000;
-const HEALTH_TIMEOUT_MS = 10_000;
-
-let tunnelProcess = null;
 let backendProcess = null;
-let healthCheckTimer = null;
-let currentTunnelUrl = null;
 let developerChatId = null;
 let isShuttingDown = false;
-let isHandlingFailure = false;
 
 // Proxy-aware POST for Telegram API calls (api.telegram.org may be blocked on some hosts).
 // Reads SOCKS_PROXY from process.env at call time (set from .env before first use).
@@ -31,7 +34,7 @@ async function tgPost(url, body) {
     const agent = new SocksProxyAgent(socksProxy);
     const parsed = new URL(url);
     const bodyStr = JSON.stringify(body);
-    return new Promise((resolve, reject) => {
+    return new Promise((resolvePromise, reject) => {
       const req = request(
         {
           hostname: parsed.hostname,
@@ -44,7 +47,7 @@ async function tgPost(url, body) {
         (res) => {
           let data = '';
           res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+          res.on('end', () => { try { resolvePromise(JSON.parse(data)); } catch { resolvePromise({}); } });
         },
       );
       req.on('error', reject);
@@ -93,13 +96,39 @@ async function updateEnvKey(filePath, key, value) {
     }
     return line;
   });
-  if (!found) {
-    updated.push(`${key}="${value}"`);
-  }
+  if (!found) updated.push(`${key}="${value}"`);
   await writeFile(filePath, updated.join('\n'), 'utf8');
 }
 
-// ─── Frontend build ───────────────────────────────────────────────────────────
+// ─── CloudPub ──────────────────────────────────────────────────────────────────
+
+// Returns the stable https://<name>.cloudpub.ru URL mapped to `port`, or null.
+// Registers the publication if it doesn't exist yet. Best-effort: returns null if the
+// `clo` CLI isn't installed/logged in.
+function ensureCloudpubUrl(port) {
+  const urlRe = new RegExp(`localhost:${port}\\s*->\\s*(https://[a-zA-Z0-9.-]+\\.cloudpub\\.ru)`, 'i');
+
+  const runClo = (args) => {
+    const r = spawnSync('clo', args, { shell: true, encoding: 'utf8' });
+    if (r.error) return null;                 // clo not installed
+    return `${r.stdout || ''}${r.stderr || ''}`;
+  };
+
+  let out = runClo(['ls']);
+  if (out === null) {
+    console.warn('[dev] CloudPub CLI (`clo`) not found — skipping tunnel setup.');
+    return null;
+  }
+  let m = out.match(urlRe);
+  if (!m) {
+    console.log(`[dev] Port ${port} not published — registering on CloudPub…`);
+    const reg = runClo(['register', 'http', String(port), '-n', PUB_NAME]) || '';
+    m = reg.match(urlRe) || (runClo(['ls']) || '').match(urlRe);
+  }
+  return m ? m[1].replace(/\/$/, '') : null;
+}
+
+// ─── Frontend / Backend ─────────────────────────────────────────────────────────
 
 function buildFrontend() {
   console.log('\n[dev] Building frontend...');
@@ -115,70 +144,48 @@ function buildFrontend() {
   console.log('[dev] Frontend built successfully.');
 }
 
-// ─── Tunnel ──────────────────────────────────────────────────────────────────
-
-function spawnTunnel() {
-  return new Promise((resolve, reject) => {
-    console.log('\n[dev] Starting tunnel...');
-    const proc = spawn('npx', ['tunnelmole', '3001'], {
-      shell: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    tunnelProcess = proc;
-
-    const rl = createInterface({ input: proc.stdout });
-    const rlErr = createInterface({ input: proc.stderr });
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      proc.kill('SIGTERM');
-      reject(new Error('Tunnel URL not received within 60 seconds'));
-    }, TUNNEL_TIMEOUT_MS);
-
-    function cleanup() {
-      clearTimeout(timeout);
-      rl.close();
-      rlErr.close();
-    }
-
-    function checkLine(line) {
-      process.stdout.write(`[tunnel] ${line}\n`);
-      const match = line.match(TUNNEL_URL_REGEX);
-      if (match) {
-        cleanup();
-        // Watch for unexpected exits after URL is received
-        proc.on('exit', (code) => {
-          if (!isShuttingDown && code !== null) {
-            console.warn(`\n[tunnel] Process exited (code ${code}). Restarting...`);
-            handleTunnelFailure();
-          }
-        });
-        resolve({ proc, url: match[0] });
-      }
-    }
-
-    rl.on('line', checkLine);
-    rlErr.on('line', checkLine);
-
-    proc.on('exit', (code) => {
-      cleanup();
-      if (code !== null) {
-        reject(new Error(`Tunnel exited before providing URL (code ${code})`));
-      }
-    });
+function spawnBackend(envVars) {
+  console.log('\n[dev] Starting backend...');
+  const proc = spawn('npm', ['run', 'dev'], {
+    cwd: resolve(ROOT, 'backend'),
+    shell: true,
+    stdio: ['ignore', process.stdout, process.stderr],
+    env: { ...process.env, ...envVars },
   });
+  proc.on('exit', (code) => {
+    if (!isShuttingDown && code !== null && code !== 0) {
+      console.error(`[dev] Backend exited with code ${code}`);
+    }
+    if (!isShuttingDown) process.exit(code ?? 0);
+  });
+  backendProcess = proc;
+  return proc;
+}
+
+async function waitForBackend(timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  console.log('[dev] Waiting for backend to be ready...');
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(`http://localhost:${PORT}/api/health`, { signal: controller.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        console.log('[dev] Backend is ready.');
+        return;
+      }
+    } catch { /* not ready yet */ }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error('Backend did not become ready within 30 seconds');
 }
 
 // ─── Telegram ─────────────────────────────────────────────────────────────────
 
 async function setChatMenuButtonRequest(botToken, webAppUrl, chatId) {
   const body = {
-    menu_button: {
-      type: 'web_app',
-      text: '📱 Трекер',
-      web_app: { url: webAppUrl },
-    },
+    menu_button: { type: 'web_app', text: 'Трекер', web_app: { url: webAppUrl } },
   };
   if (chatId) body.chat_id = Number(chatId);
   return tgPost(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, body);
@@ -186,42 +193,31 @@ async function setChatMenuButtonRequest(botToken, webAppUrl, chatId) {
 
 async function setTelegramMenuButton(botToken, webAppUrl) {
   try {
-    // 1. Set global default (for all new chats)
     const global = await setChatMenuButtonRequest(botToken, webAppUrl, null);
-    if (!global.ok) {
-      console.warn('[telegram] setChatMenuButton (global) failed:', global.description);
-    } else {
-      console.log(`[telegram] Menu button (global) updated → ${webAppUrl}`);
-    }
+    if (!global.ok) console.warn('[telegram] setChatMenuButton (global) failed:', global.description);
+    else console.log(`[telegram] Menu button (global) → ${webAppUrl}`);
 
-    // 2. Force-update for developer's existing chat (bypasses client cache)
     if (developerChatId) {
       const perChat = await setChatMenuButtonRequest(botToken, webAppUrl, developerChatId);
-      if (!perChat.ok) {
-        console.warn('[telegram] setChatMenuButton (per-chat) failed:', perChat.description);
-      } else {
-        console.log(`[telegram] Menu button (chat ${developerChatId}) updated`);
-      }
+      if (!perChat.ok) console.warn('[telegram] setChatMenuButton (per-chat) failed:', perChat.description);
+      else console.log(`[telegram] Menu button (chat ${developerChatId}) updated`);
     }
   } catch (err) {
     console.warn('[telegram] Could not update menu button:', err.message);
   }
 }
 
-// Telegram Bot API cannot set the "Main App" URL (BotFather-only setting).
-// Instead, we send the developer a message with the URL + BotFather deep link
-// so they can update it in one tap.
-async function notifyDeveloper(botToken, developerChatId, webAppUrl) {
+// Telegram Bot API cannot set the "Main App" URL (BotFather-only). With CloudPub the URL
+// is stable, so this only needs doing once — we still notify on change for convenience.
+async function notifyDeveloper(botToken, webAppUrl) {
   if (!developerChatId) return;
   try {
-    const text =
-      `🔄 <b>Tunnel URL обновился</b>\n\n` +
-      `<code>${webAppUrl}</code>\n\n` +
-      `Вставь ссылку в BotFather → Main App:\n` +
-      `<a href="https://t.me/BotFather">Открыть BotFather</a> → /mybots → Edit Bot → Mini App URL`;
     await tgPost(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       chat_id: developerChatId,
-      text,
+      text:
+        `✅ <b>HabitTracker (CloudPub)</b>\n\n<code>${webAppUrl}</code>\n\n` +
+        `Если меняешь Main App URL вручную: ` +
+        `<a href="https://t.me/BotFather">BotFather</a> → /mybots → Edit Bot → Mini App URL`,
       parse_mode: 'HTML',
       disable_web_page_preview: true,
     });
@@ -231,116 +227,12 @@ async function notifyDeveloper(botToken, developerChatId, webAppUrl) {
   }
 }
 
-// ─── Backend ──────────────────────────────────────────────────────────────────
-
-function spawnBackend(envVars) {
-  console.log('\n[dev] Starting backend...');
-  const proc = spawn('npm', ['run', 'dev'], {
-    cwd: resolve(ROOT, 'backend'),
-    shell: true,
-    // pipe to parent stdio while keeping detached (so we can kill the whole group)
-    stdio: ['ignore', process.stdout, process.stderr],
-    env: { ...process.env, ...envVars },
-    detached: true,  // child becomes process group leader → kill(-pid) kills entire tree
-  });
-  proc.unref(); // don't prevent dev.mjs event loop from exiting on its own
-  proc.on('exit', (code) => {
-    if (!isShuttingDown && code !== null && code !== 0) {
-      console.error(`[dev] Backend exited with code ${code}`);
-    }
-  });
-  backendProcess = proc;
-  return proc;
-}
-
-function killBackend() {
-  if (!backendProcess) return;
-  backendProcess.removeAllListeners('exit');
-  try {
-    process.kill(-backendProcess.pid, 'SIGTERM'); // kill entire process group (tsx, node, etc.)
-  } catch {
-    backendProcess.kill('SIGTERM');
-  }
-  backendProcess = null;
-}
-
-function printMainAppInstructions(webAppUrl) {
+function printManualInstructions(port) {
   console.log('\n┌─────────────────────────────────────────────────────────────┐');
-  console.log('│  ⚠️  Main App URL (обновить вручную в BotFather)            │');
-  console.log('│                                                             │');
-  console.log(`│  ${webAppUrl.padEnd(59)}│`);
-  console.log('│                                                             │');
-  console.log('│  BotFather → /mybots → Edit Bot → Mini App URL             │');
+  console.log('│  CloudPub CLI not available — expose the backend manually:   │');
+  console.log(`│    clo publish http ${String(port).padEnd(41)}│`);
+  console.log('│  then put the printed https URL into backend/.env WEBAPP_URL │');
   console.log('└─────────────────────────────────────────────────────────────┘');
-}
-
-// ─── Health monitor ───────────────────────────────────────────────────────────
-
-async function checkHealth(url) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    const res = await fetch(`${url}/api/health`, { signal: controller.signal });
-    clearTimeout(timer);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function handleTunnelFailure() {
-  if (isShuttingDown || isHandlingFailure) return;
-  isHandlingFailure = true;
-
-  console.warn('\n[dev] Tunnel failure detected. Replacing tunnel...');
-
-  // Kill old tunnel
-  if (tunnelProcess) {
-    tunnelProcess.removeAllListeners('exit');
-    tunnelProcess.kill('SIGTERM');
-    tunnelProcess = null;
-  }
-
-  let newUrl;
-  try {
-    const { url } = await spawnTunnel();
-    newUrl = url;
-    currentTunnelUrl = newUrl;
-  } catch (err) {
-    console.error('[dev] Failed to get new tunnel URL:', err.message);
-    console.log('[dev] Will retry at next health check interval.');
-    isHandlingFailure = false;
-    return;
-  }
-
-  // Read BOT_TOKEN again (in case .env changed)
-  const raw = await readFile(ENV_PATH, 'utf8');
-  const envVars = parseEnv(raw);
-
-  await updateEnvKey(ENV_PATH, 'WEBAPP_URL', newUrl);
-  await setTelegramMenuButton(envVars.BOT_TOKEN, newUrl);
-  printMainAppInstructions(newUrl);
-  await notifyDeveloper(envVars.BOT_TOKEN, developerChatId, newUrl);
-
-  // Restart backend with new env
-  killBackend();
-  await waitForPortFree(Number(envVars.PORT || 3001));
-  const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
-  spawnBackend(freshEnv);
-
-  console.log(`[dev] Redeployed with new tunnel URL: ${newUrl}`);
-  isHandlingFailure = false;
-}
-
-function startHealthMonitor() {
-  healthCheckTimer = setInterval(async () => {
-    if (isShuttingDown || isHandlingFailure || !currentTunnelUrl) return;
-    const healthy = await checkHealth(currentTunnelUrl);
-    if (!healthy) {
-      console.warn(`[dev] Health check failed for ${currentTunnelUrl}`);
-      await handleTunnelFailure();
-    }
-  }, HEALTH_INTERVAL_MS);
 }
 
 // ─── Shutdown ─────────────────────────────────────────────────────────────────
@@ -349,94 +241,47 @@ function shutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`\n[dev] Received ${signal}. Shutting down...`);
-  if (healthCheckTimer) clearInterval(healthCheckTimer);
-  killBackend();
-  if (tunnelProcess) {
-    tunnelProcess.removeAllListeners('exit');
-    tunnelProcess.kill('SIGTERM');
-  }
-  setTimeout(() => process.exit(0), 3000);
+  if (backendProcess) backendProcess.kill('SIGTERM');
+  setTimeout(() => process.exit(0), 2000);
 }
-
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function waitForBackend(timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  const port = parseInt(process.env.PORT || '3001', 10);
-  console.log('[dev] Waiting for backend to be ready...');
-  while (Date.now() < deadline) {
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`http://localhost:${port}/api/health`, { signal: controller.signal });
-      clearTimeout(t);
-      if (res.ok) {
-        console.log('[dev] Backend is ready.');
-        return;
-      }
-    } catch {
-      // not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error('Backend did not become ready within 30 seconds');
-}
-
-async function waitForPortFree(port, timeoutMs = 10_000) {
-  const { createServer } = await import('net');
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const free = await new Promise((res) => {
-      const s = createServer();
-      s.once('error', () => res(false));
-      s.once('listening', () => { s.close(); res(true); });
-      s.listen(port, '127.0.0.1');
-    });
-    if (free) return;
-    await new Promise((r) => setTimeout(r, 300));
-  }
-}
-
 async function main() {
   console.log('╔══════════════════════════════════════╗');
-  console.log('║    HabitTracker — dev launcher       ║');
+  console.log('║   HabitTracker — dev launcher        ║');
   console.log('╚══════════════════════════════════════╝\n');
 
-  // 1. Read .env
   let raw;
   try {
     raw = await readFile(ENV_PATH, 'utf8');
   } catch {
-    console.error(`[dev] Cannot read backend/.env\n  → Create it: backend/.env with BOT_TOKEN, DATABASE_URL, JWT_SECRET`);
+    console.error('[dev] Cannot read backend/.env\n  → Create it with BOT_TOKEN, DATABASE_URL, JWT_SECRET');
     process.exit(1);
   }
-
   const envVars = parseEnv(raw);
-
   if (!envVars.BOT_TOKEN) {
-    console.error('[dev] BOT_TOKEN is not set in backend/.env\n  → Add: BOT_TOKEN="your_token"');
+    console.error('[dev] BOT_TOKEN is not set in backend/.env');
     process.exit(1);
   }
-
   developerChatId = envVars.DEVELOPER_CHAT_ID || null;
+  if (envVars.SOCKS_PROXY) process.env.SOCKS_PROXY = envVars.SOCKS_PROXY; // for tgPost
 
-  // Apply SOCKS_PROXY to this process so tgPost() can use it
-  if (envVars.SOCKS_PROXY) process.env.SOCKS_PROXY = envVars.SOCKS_PROXY;
+  // 1. Discover / register the stable CloudPub URL and sync it into .env BEFORE the
+  //    backend starts, so it boots with the correct WEBAPP_URL (no restart needed).
+  const url = ensureCloudpubUrl(PORT);
+  if (url && url !== envVars.WEBAPP_URL) {
+    await updateEnvKey(ENV_PATH, 'WEBAPP_URL', url);
+    envVars.WEBAPP_URL = url;
+    console.log(`[dev] WEBAPP_URL set to ${url}`);
+  } else if (url) {
+    console.log(`[dev] CloudPub URL: ${url} (already in .env)`);
+  }
 
-  // 2. Stop any pm2-managed backend to avoid port conflicts
-  try {
-    const { spawnSync: ss } = await import('child_process');
-    const r = ss('pm2', ['delete', 'habit-backend'], { shell: true, stdio: 'pipe' });
-    if (r.status === 0) console.log('[dev] Stopped pm2 habit-backend.');
-  } catch { /* pm2 not installed or process not found — ok */ }
-
-  // 3. Build frontend
+  // 2. Build frontend + start backend.
   buildFrontend();
-
-  // 4. Start backend with current env so port 3001 is occupied before tunnelmole
   spawnBackend(envVars);
   try {
     await waitForBackend();
@@ -445,39 +290,15 @@ async function main() {
     process.exit(1);
   }
 
-  // 5. Start tunnel (port 3001 is now open — tunnelmole won't exit early)
-  let tunnelUrl;
-  try {
-    const { url } = await spawnTunnel();
-    tunnelUrl = url;
-    currentTunnelUrl = url;
-    console.log(`\n[dev] Tunnel URL: ${tunnelUrl}`);
-  } catch (err) {
-    console.error('[dev] Failed to start tunnel:', err.message);
-    process.exit(1);
+  // 3. Point the Telegram menu button at the stable URL (or print manual steps).
+  if (url) {
+    await setTelegramMenuButton(envVars.BOT_TOKEN, url);
+    await notifyDeveloper(envVars.BOT_TOKEN, url);
+  } else {
+    printManualInstructions(PORT);
   }
 
-  // 6. Update .env with tunnel URL
-  await updateEnvKey(ENV_PATH, 'WEBAPP_URL', tunnelUrl);
-
-  // 7. Configure Telegram menu button
-  await setTelegramMenuButton(envVars.BOT_TOKEN, tunnelUrl);
-
-  // 8. Print Main App instructions + notify developer
-  printMainAppInstructions(tunnelUrl);
-  await notifyDeveloper(envVars.BOT_TOKEN, developerChatId, tunnelUrl);
-
-  // 9. Restart backend so it picks up the new WEBAPP_URL from .env
-  console.log('\n[dev] Restarting backend with updated WEBAPP_URL...');
-  killBackend();
-  await waitForPortFree(parseInt(envVars.PORT || '3001', 10));
-  const freshEnv = parseEnv(await readFile(ENV_PATH, 'utf8'));
-  spawnBackend(freshEnv);
-
-  // 10. Start health monitor
-  startHealthMonitor();
-
-  console.log('\n[dev] Running. Health check every 2 minutes. Ctrl+C to stop.\n');
+  console.log('\n[dev] Running. CloudPub URL is stable — Ctrl+C to stop.\n');
 }
 
 main().catch((err) => {

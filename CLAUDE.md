@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Habit Tracker is a **Telegram Mini App** — a React SPA served inside Telegram's WebView. Users open it via a bot button; the bot also sends reminders and delivers daily analytics reports. The backend serves the frontend as static files from `public/` and exposes a REST API.
 
+**Stack:** React 19, Vite, Tailwind CSS, Framer Motion, Zustand (frontend) · Fastify v5, Prisma, SQLite/PostgreSQL, grammY, node-cron (backend) · date-fns with Russian locale for all date formatting
+
+**Tests:** None. Use `tsc --noEmit` in `frontend/` or `backend/` as the primary correctness check.
+
 ## Commands
 
 ### Root (single-command dev launcher)
@@ -42,6 +46,10 @@ PORT=3001
 WEBAPP_URL="https://your-domain.com"  # auto-set by dev.mjs; used for menu button + /start button
 DEVELOPER_CHAT_ID="your_telegram_id"  # if set: receives daily reports, tunnel URL on restart, /stats command
 SOCKS_PROXY="socks5://127.0.0.1:1080" # optional: SOCKS5 proxy for Telegram API (needed if api.telegram.org is blocked by the host)
+CLAUDE_PROXY="http://127.0.0.1:3128"  # optional: HTTP proxy (alternative to SOCKS_PROXY; preferred over SOCKS_PROXY if both set)
+KEEP_ALIVE_SECRET="random_secret"     # Bearer token for /api/claude/session-start (shared with keep-alive.mjs)
+CLAUDE_SESSION_STATE_PATH="/tmp/claude-session.json" # where claudeSessions.ts persists session state (defaults to /tmp/claude-session.json)
+CLAUDE_CODE_OAUTH_TOKEN="..."         # long-lived Claude Code OAuth token for keep-alive.mjs on VPS
 ```
 
 Frontend uses `VITE_API_URL` (optional) — defaults to empty string so API calls go to the same origin (works when backend serves the built frontend).
@@ -61,18 +69,15 @@ In development (`NODE_ENV !== 'production'`), sending `initData: "dev-mode"` to 
 ### Frontend State Management
 Navigation is state-driven via Zustand — there is **no router**. `habitsStore` holds a `screen` field (`'home' | 'habit' | 'create' | 'edit'`) and `selectedHabitId`. `AnimatePresence` in `App.tsx` handles transitions between screens.
 
-### Dev Launcher (`scripts/dev.mjs`)
-ESM Node.js script that acts as a process supervisor for local development:
-1. Reads `backend/.env`, validates `BOT_TOKEN` exists
-2. Builds frontend synchronously (`spawnSync`)
-3. Starts tunnelmole on port 3001, waits for URL in stdout/stderr (regex match, 60s timeout)
-4. Writes `WEBAPP_URL` into `backend/.env` via line-by-line parser
-5. Calls `setChatMenuButton` twice — global (default) + per-developer chat (busts Telegram client cache)
-6. Sends developer a Telegram message with the new URL
-7. Spawns backend (`npm run dev`) with updated env vars
-8. Every 2 minutes: GET `/api/health` — on failure, replaces tunnel + restarts backend
+Telegram's native `BackButton` and `MainButton` (from `window.Telegram.WebApp`) are used for navigation and primary actions instead of custom UI buttons. `HapticFeedback` is used for tactile responses on interactions.
 
-Module-level variables track `tunnelProcess`, `backendProcess`, `healthCheckTimer` to enable clean shutdown on SIGINT/SIGTERM.
+### Dev Launcher (`scripts/dev.mjs`)
+ESM Node.js script for local development. CloudPub gives a **stable** URL, so there is no tunnel rotation or health-monitor loop (unlike the old localtunnel/tunnelmole versions):
+1. Reads `backend/.env`, validates `BOT_TOKEN`, applies `SOCKS_PROXY` to `process.env`
+2. `ensureCloudpubUrl(3001)` — runs `clo ls` to find the `https://<name>.cloudpub.ru` mapped to port 3001; registers it (`clo register http 3001 -n habit-tracker`) if missing. Best-effort: if the `clo` CLI is absent it prints manual instructions and continues
+3. Writes `WEBAPP_URL` into `backend/.env` (only if changed) **before** starting the backend, so it boots with the right URL (no restart)
+4. Builds frontend synchronously (`spawnSync`), then spawns backend (`npm run dev`)
+5. After the backend is healthy, calls `setChatMenuButton` twice — global (default) + per-developer chat (busts Telegram client cache) — and notifies the developer
 
 **Windows path note:** Uses `fileURLToPath(new URL(..., import.meta.url))` for cross-platform path resolution.
 
@@ -106,9 +111,46 @@ Aggregate helpers: `getDau()`, `getWau()`, `getNewUsersCount()`, `getTopEvents()
 
 `GET /habits` eagerly loads the last 18 weeks of entries for all habits in one query — no separate pagination.
 
+### Heatmap Interaction
+Clicking a cell in `Heatmap.tsx` cycles intensity: `0 → 1 → 2 → 3 → 0`. The change is applied as an optimistic update in `habitsStore.toggleEntry` (store updated before the API call; reverts via full `load()` on error). `MiniHeatmap` is read-only; `HabitCard` wraps it in a flex-grow container and uses a `ResizeObserver` to recompute the `weeks` prop on every container width change (each column = 14px), so the heatmap is responsive to window resizing in desktop Telegram (Mac/Windows).
+
+### Habit Card Layout
+Card has two columns: left (heatmap, `flex-1`) and right (checkbox, icon, name, streak). The right column uses `w-fit min-w-14 max-w-[160px]` so its width adapts to the habit name; together with the heatmap's `ResizeObserver`, this means short names give the heatmap more space and long names give the name more space. Habit name is capped at 20 characters — enforced by `maxLength={20}` on the input in `HabitFormPage.tsx` and validated server-side in `routes/habits.ts` (POST and PATCH return 400 for names > 20 chars).
+
+### Frontend Utilities
+- `frontend/src/utils/dates.ts` — `getWeeksGrid`, `calculateStreak`, `getMonthCompletionRate`, `toDateString`, `WEEKDAY_LABELS`; uses `date-fns/locale/ru` for Russian month names
+- `frontend/src/utils/colors.ts` — `HABIT_COLORS` palette, `getHeatmapColor(baseColor, value)` (opacity levels: 0.3 / 0.6 / 1.0 for values 1–3), `getEmptyColor(isDark)` for empty cells
+
+### Reminder Time Picker
+Reminder time is set via `NotificationSheet.tsx` (bottom sheet, opened from `HabitDetailPage`), which uses a custom iOS-style `WheelPicker.tsx` for hours/minutes. The wheel uses `mask-image` (not gradient overlays) for the fade effect and a border-only selection indicator so digits stay visible — see the recent commit history before changing its CSS, as z-index/mask layering has been a recurring source of bugs.
+
+### Bot Transport
+grammY uses **long-polling** (not webhooks). The bot starts with `bot.start()` inside `startBot()` in `services/bot.ts` after the Fastify server is listening.
+
+### Claude Session Management
+Keeps Claude Code's 5-hour usage window alive on VPS production so the session doesn't expire between uses.
+
+- **`scripts/keep-alive.mjs`** — run every 5 hours via VPS cron: `0 */5 * * * cd /habitBot/HabitTracker && /usr/bin/node scripts/keep-alive.mjs`. Reads `backend/.env`, executes `claude -p "привет"` (minimal prompt to hold the session open), then POSTs to `/api/claude/session-start` with `Authorization: Bearer <KEEP_ALIVE_SECRET>`. Supports both `CLAUDE_PROXY` (HTTP) and `SOCKS_PROXY` (SOCKS5) — HTTP preferred when both are set. Requires `CLAUDE_CODE_OAUTH_TOKEN` for a stable long-lived auth token.
+- **`backend/src/middleware/sharedSecretGuard.ts`** — validates the Bearer token on `/api/claude/session-start` against `KEEP_ALIVE_SECRET`; returns 401 if wrong, 503 if `KEEP_ALIVE_SECRET` is not configured.
+- **`backend/src/services/claudeSessions.ts`** — persists session state (start time, warning-sent flag) to a JSON file at `CLAUDE_SESSION_STATE_PATH`. `registerSessionStart()` records a new 5-hour window and notifies `DEVELOPER_CHAT_ID` via Telegram. `startSessionWarningCron()` (called at startup) checks every minute and sends a 30-min-before-expiry warning; cleans up the state file 5 minutes after session ends.
+- **Bot command `/claude_session`** — developer-only; calls `registerSessionStart({ force: true })` to manually register a session from Telegram.
+
+### Production Tunnel — CloudPub (`scripts/cf-tunnel.sh`)
+The VPS exposes the backend via **CloudPub**, not the dev launcher. CloudPub runs as a persistent systemd service (`cloudpub.service` → `clo run --run-as-service`) that serves all registered publications on **stable** `https://<name>.cloudpub.ru` subdomains. The habit tracker's URL is fixed (`feverishly-warranted-mandrill.cloudpub.ru` → port 3001).
+
+Because the URL never rotates, `cf-tunnel.sh` is now a **one-shot idempotent sync** (filename kept for continuity), NOT a long-running pm2 daemon — the old crash-looping `cf-tunnel` pm2 app was removed. Run it once after deploy or when the URL changes:
+1. Waits for `/api/health`, ensures `cloudpub.service` is running (never restarts it — that would drop sibling apps' tunnels)
+2. Reads the stable URL from `clo ls`; registers the publication (`clo register http 3001 -n habit-tracker`) if missing — registration activates immediately, no daemon restart
+3. Updates `WEBAPP_URL` in `backend/.env` **only if changed**; exits early if already current
+4. Sets the Telegram menu button (global + per-developer chat) and notifies the developer. JSON payloads are built with `python3 json.dumps` so Cyrillic is `\u`-escaped (avoids the bash UTF-8 quoting pitfall)
+5. `pm2 restart habit-backend` so the `/start` button serves the new URL (backend loads `.env` via `node --env-file`)
+
+**Backend runs the compiled build in production:** `pm2 start dist/index.js --name habit-backend --node-args="--env-file=.../backend/.env"` (like the sibling bots), NOT `tsx watch` — the watcher's server child can die while pm2 still shows "online", leaving port 3001 dead.
+
 ### API Routes
-All routes require `Authorization: Bearer <jwt>` except `POST /api/auth`.
+All routes require `Authorization: Bearer <jwt>` except `POST /api/auth` and `POST /api/claude/session-start`.
 - `POST /api/auth` — validate Telegram initData, return JWT
+- `POST /api/claude/session-start` — register a Claude Code session start; requires `Authorization: Bearer <KEEP_ALIVE_SECRET>` (sharedSecretGuard, not authGuard)
 - `GET/POST /api/habits` — list (18 weeks entries included) / create
 - `PATCH/DELETE /api/habits/:id` — update / hard-delete (ignores the `archived` flag; DELETE removes the row)
 - `GET/POST /api/habits/:id/entries` — fetch or upsert entries (POST with `value=0` deletes)
