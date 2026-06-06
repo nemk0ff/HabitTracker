@@ -7,9 +7,12 @@ import { authRoutes } from './routes/auth.js';
 import { habitsRoutes } from './routes/habits.js';
 import { entriesRoutes } from './routes/entries.js';
 import { reminderRoutes } from './routes/reminders.js';
+import { claudeSessionRoutes } from './routes/claudeSession.js';
+import { adminRoutes } from './routes/admin.js';
 import { startScheduler } from './services/scheduler.js';
 import { bot, startBot } from './services/bot.js';
 import { startAlerts } from './services/alerts.js';
+import { startSessionWarningCron } from './services/claudeSessions.js';
 const PORT = Number(process.env.PORT) || 3001;
 
 const app = Fastify({ logger: true });
@@ -23,6 +26,8 @@ app.register(authRoutes, { prefix: '/api' });
 app.register(habitsRoutes, { prefix: '/api' });
 app.register(entriesRoutes, { prefix: '/api' });
 app.register(reminderRoutes, { prefix: '/api' });
+app.register(claudeSessionRoutes, { prefix: '/api' });
+app.register(adminRoutes, { prefix: '/api' });
 
 app.get('/api/health', async () => ({ status: 'ok' }));
 
@@ -54,6 +59,7 @@ try {
   startScheduler();
   startBot();
   startAlerts();
+  startSessionWarningCron();
 } catch (err) {
   app.log.error(err);
   process.exit(1);

@@ -5,6 +5,7 @@ import { useHabitsStore } from './stores/habitsStore';
 import { HomePage } from './pages/HomePage';
 import { HabitDetailPage } from './pages/HabitDetailPage';
 import { HabitFormPage } from './pages/HabitFormPage';
+import { AdminPage } from './pages/AdminPage';
 import { LoadingScreen } from './components/LoadingScreen';
 
 export default function App() {
@@ -89,6 +90,7 @@ export default function App() {
   return (
     <AnimatePresence mode="wait">
       {screen === 'home' && <HomePage key="home" />}
+      {screen === 'admin' && <AdminPage key="admin" />}
       {screen === 'habit' && <HabitDetailPage key="habit" />}
       {(screen === 'create' || screen === 'edit') && <HabitFormPage key="form" />}
     </AnimatePresence>

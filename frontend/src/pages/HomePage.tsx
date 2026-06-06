@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useHabitsStore } from '../stores/habitsStore';
+import { useAuthStore } from '../stores/authStore';
 import { HabitCard } from '../components/HabitCard';
 
 export function HomePage() {
   const { habits, loading, navigate } = useHabitsStore();
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
     const webapp = window.Telegram?.WebApp;
@@ -41,7 +43,17 @@ export function HomePage() {
       className="scrollable"
     >
       <div className="p-4 pb-24">
-        <h1 className="text-xl font-bold text-tg-text mb-4">Мои привычки</h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-xl font-bold text-tg-text">Мои привычки</h1>
+          {user?.isAdmin && (
+            <button
+              onClick={() => navigate('admin')}
+              className="px-3 py-1.5 rounded-xl text-sm font-medium bg-tg-secondary text-tg-text active:opacity-70 transition-opacity"
+            >
+              👁 Все
+            </button>
+          )}
+        </div>
 
         {habits.length === 0 ? (
           <EmptyState onAdd={() => navigate('create')} />

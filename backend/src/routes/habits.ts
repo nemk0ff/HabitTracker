@@ -49,8 +49,8 @@ export async function habitsRoutes(app: FastifyInstance) {
       if (!trimmedName) {
         return reply.status(400).send({ error: 'Name is required' });
       }
-      if (trimmedName.length > 20) {
-        return reply.status(400).send({ error: 'Name must be 20 characters or fewer' });
+      if (trimmedName.length > 30) {
+        return reply.status(400).send({ error: 'Name must be 30 characters or fewer' });
       }
 
       const habit = await prisma.habit.create({
@@ -98,8 +98,8 @@ export async function habitsRoutes(app: FastifyInstance) {
 
       const { name, color, icon, binary } = request.body;
       const trimmedName = name?.trim();
-      if (trimmedName !== undefined && trimmedName.length > 20) {
-        return reply.status(400).send({ error: 'Name must be 20 characters or fewer' });
+      if (trimmedName !== undefined && trimmedName.length > 30) {
+        return reply.status(400).send({ error: 'Name must be 30 characters or fewer' });
       }
       const habit = await prisma.habit.update({
         where: { id: habitId },

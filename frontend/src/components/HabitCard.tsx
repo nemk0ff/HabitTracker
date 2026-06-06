@@ -7,9 +7,10 @@ import type { Habit } from '../types';
 
 interface Props {
   habit: Habit;
+  readOnly?: boolean;
 }
 
-export function HabitCard({ habit }: Props) {
+export function HabitCard({ habit, readOnly = false }: Props) {
   const { navigate, toggleEntry } = useHabitsStore();
   const { current } = calculateStreak(habit.entries);
   const todayStr = toDateString(new Date());
@@ -50,9 +51,11 @@ export function HabitCard({ habit }: Props) {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
-      whileTap={{ scale: 0.98 }}
-      onClick={() => navigate('habit', habit.id)}
-      className="bg-tg-section rounded-2xl p-4 cursor-pointer active:opacity-80 transition-opacity"
+      whileTap={readOnly ? undefined : { scale: 0.98 }}
+      onClick={readOnly ? undefined : () => navigate('habit', habit.id)}
+      className={`bg-tg-section rounded-2xl p-4 transition-opacity ${
+        readOnly ? '' : 'cursor-pointer active:opacity-80'
+      }`}
     >
       <div className="flex gap-3">
         {/* Heatmap — takes all available space */}
@@ -68,37 +71,38 @@ export function HabitCard({ habit }: Props) {
 
         {/* Right column — width adapts to habit name (min 56px, max ~160px) */}
         <div className="shrink-0 flex flex-col justify-between items-start min-w-14 max-w-[160px] w-fit">
-          {/* Checkbox */}
-          <button
-            onClick={handleCheck}
-            className="w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-200"
-            style={{
-              backgroundColor: isDoneToday ? habit.color : 'transparent',
-              border: isDoneToday ? 'none' : `2px solid ${habit.color}`,
-            }}
-          >
-            {isDoneToday && (
-              <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
-                <path
-                  d="M4 9.5L7.5 13L14 5"
-                  stroke="white"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-          </button>
-
-          {/* Icon + name */}
-          <div className="w-full">
+          {/* Checkbox + emoji icon */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={readOnly ? undefined : handleCheck}
+              disabled={readOnly}
+              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0"
+              style={{
+                backgroundColor: isDoneToday ? habit.color : 'transparent',
+                border: isDoneToday ? 'none' : `2px solid ${habit.color}`,
+              }}
+            >
+              {isDoneToday && (
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <path
+                    d="M4 9.5L7.5 13L14 5"
+                    stroke="white"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
             {habit.icon && (
-              <span className="text-base leading-none block mb-0.5">{habit.icon}</span>
+              <span className="text-xl leading-none">{habit.icon}</span>
             )}
-            <span className="font-semibold text-tg-text text-xs leading-tight block whitespace-nowrap overflow-hidden text-ellipsis">
-              {habit.name}
-            </span>
           </div>
+
+          {/* Name */}
+          <span className="font-semibold text-tg-text text-lg leading-tight break-words line-clamp-2 w-full">
+            {habit.name}
+          </span>
 
           {/* Streak */}
           {current > 0 ? (

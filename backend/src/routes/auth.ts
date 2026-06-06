@@ -6,6 +6,7 @@ import { track } from '../services/analytics.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const IS_DEV = process.env.NODE_ENV !== 'production';
+const DEVELOPER_CHAT_ID = process.env.DEVELOPER_CHAT_ID || '';
 
 export async function authRoutes(app: FastifyInstance) {
   app.post<{ Body: { initData: string } }>('/auth', async (request, reply) => {
@@ -64,6 +65,7 @@ export async function authRoutes(app: FastifyInstance) {
         firstName: user.firstName,
         lastName: user.lastName,
         username: user.username,
+        isAdmin: DEVELOPER_CHAT_ID !== '' && telegramUser.id.toString() === DEVELOPER_CHAT_ID,
       },
     };
   });

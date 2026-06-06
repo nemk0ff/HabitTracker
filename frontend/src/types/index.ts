@@ -20,6 +20,19 @@ export interface User {
   firstName: string | null;
   lastName: string | null;
   username: string | null;
+  isAdmin: boolean;
+}
+
+export interface AdminUserGroup {
+  user: {
+    id: number;
+    telegramId: string;
+    firstName: string | null;
+    lastName: string | null;
+    username: string | null;
+    lastSeenAt: string | null;
+  };
+  habits: Habit[];
 }
 
 export type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -33,4 +46,4 @@ export interface Reminder {
   snooze: boolean;
 }
 
-export type Screen = 'home' | 'habit' | 'create' | 'edit';
+export type Screen = 'home' | 'habit' | 'create' | 'edit' | 'admin';

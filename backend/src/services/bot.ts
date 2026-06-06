@@ -64,6 +64,35 @@ bot.command('stats', async (ctx) => {
   await sendQuickStats(DEVELOPER_CHAT_ID);
 });
 
+bot.command('claude_session', async (ctx) => {
+  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
+  const { registerSessionStart } = await import('./claudeSessions.js');
+  await registerSessionStart({ force: true });
+});
+
+bot.command('users', async (ctx) => {
+  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
+  const { sendUsersList } = await import('./alerts.js');
+  await sendUsersList(DEVELOPER_CHAT_ID);
+});
+
+bot.command('activity', async (ctx) => {
+  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
+  const { sendRecentActivity } = await import('./alerts.js');
+  await sendRecentActivity(DEVELOPER_CHAT_ID);
+});
+
+bot.command('user', async (ctx) => {
+  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
+  const id = Number(ctx.match?.toString().trim());
+  if (!Number.isInteger(id) || id <= 0) {
+    await ctx.reply('Использование: /user <DB id> — например /user 3\nСписок id: /users');
+    return;
+  }
+  const { sendUserDetail } = await import('./alerts.js');
+  await sendUserDetail(DEVELOPER_CHAT_ID, id);
+});
+
 bot.on('message', async (ctx) => {
   const userId = await resolveUserId(ctx.from?.id);
   track({
