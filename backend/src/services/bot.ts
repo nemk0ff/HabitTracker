@@ -93,6 +93,17 @@ bot.command('user', async (ctx) => {
   await sendUserDetail(DEVELOPER_CHAT_ID, id);
 });
 
+/** Weekly nutrition summary on demand (nutrition-module users only). */
+bot.command('week', async (ctx) => {
+  const { hasNutritionAccess } = await import('../utils/features.js');
+  if (!ctx.from || !hasNutritionAccess(ctx.from.id)) return;
+  const userId = await resolveUserId(ctx.from.id);
+  if (!userId) return;
+  await ctx.replyWithChatAction('typing');
+  const { weeklySummaryText } = await import('./nutrition/weeklySummary.js');
+  await ctx.reply(await weeklySummaryText(userId));
+});
+
 bot.on('message', async (ctx) => {
   const userId = await resolveUserId(ctx.from?.id);
   track({

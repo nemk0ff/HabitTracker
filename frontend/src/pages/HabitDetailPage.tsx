@@ -7,6 +7,9 @@ import { StatCard } from '../components/StatCard';
 import { NotificationSheet } from '../components/NotificationSheet';
 import { calculateStreak, getMonthCompletionRate } from '../utils/dates';
 import { fetchReminder, saveReminder } from '../api/habits';
+import { HoursSheet } from '../components/HoursSheet';
+import { averageHours, formatHours, isHoursHabit, levelEntries } from '../utils/habits';
+import { toDateString } from '../utils/dates';
 import type { Reminder, DayOfWeek } from '../types';
 
 export function HabitDetailPage() {
@@ -16,6 +19,7 @@ export function HabitDetailPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [reminder, setReminder] = useState<Reminder | null>(null);
+  const [hoursDate, setHoursDate] = useState<string | null>(null);
 
   const loadReminder = useCallback(async () => {
     if (!selectedHabitId) return;
@@ -58,6 +62,9 @@ export function HabitDetailPage() {
   const { current, best } = calculateStreak(habit.entries);
   const now = new Date();
   const completionRate = getMonthCompletionRate(habit.entries, now.getFullYear(), now.getMonth());
+
+  const hours = isHoursHabit(habit);
+  const avg7 = hours ? averageHours(habit.entries, toDateString(new Date(Date.now() - 6 * 86_400_000))) : null;
 
   const handleToggle = (date: string, value: number) => {
     toggleEntry(habit.id, date, value);
@@ -126,16 +133,38 @@ export function HabitDetailPage() {
         <div className="flex gap-2 mb-5">
           <StatCard label="Текущий" value={current} color={habit.color} />
           <StatCard label="Лучший" value={best} color={habit.color} />
-          <StatCard label="За месяц" value={`${completionRate}%`} color={habit.color} />
+          {hours ? (
+            <StatCard label="Среднее 7 дн" value={avg7 !== null ? formatHours(avg7) : '—'} color={habit.color} />
+          ) : (
+            <StatCard label="За месяц" value={`${completionRate}%`} color={habit.color} />
+          )}
         </div>
 
         {/* Heatmap */}
         <div className="bg-tg-section rounded-2xl p-4 mb-5">
-          <Heatmap entries={habit.entries} color={habit.color} binary={habit.binary} onToggle={handleToggle} />
+          {hours ? (
+            <Heatmap entries={levelEntries(habit)} color={habit.color} onSelect={setHoursDate} />
+          ) : (
+            <Heatmap entries={habit.entries} color={habit.color} binary={habit.binary} onToggle={handleToggle} />
+          )}
         </div>
 
         {/* Legend */}
-        {habit.binary ? (
+        {hours ? (
+          <div className="flex items-center justify-center gap-2 mb-8 text-[11px] text-tg-hint">
+            {['< 5 ч', '5–7 ч', '7+ ч'].map((label, i) => (
+              <span key={label} className="flex items-center gap-1">
+                <span
+                  className="w-4 h-4 rounded-[3px] inline-block"
+                  style={{
+                    backgroundColor: `rgba(${parseInt(habit.color.slice(1, 3), 16)}, ${parseInt(habit.color.slice(3, 5), 16)}, ${parseInt(habit.color.slice(5, 7), 16)}, ${[0.3, 0.6, 1][i]})`,
+                  }}
+                />
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : habit.binary ? (
           <div className="flex items-center justify-center gap-2 mb-8 text-[11px] text-tg-hint">
             <div
               className="w-4 h-4 rounded-[3px]"
@@ -196,6 +225,17 @@ export function HabitDetailPage() {
           </button>
         )}
       </div>
+
+      {hours && (
+        <HoursSheet
+          date={hoursDate}
+          title={habit.name}
+          minutes={habit.entries.find((e) => e.date === hoursDate)?.value ?? 0}
+          color={habit.color}
+          onClose={() => setHoursDate(null)}
+          onSave={(m) => hoursDate && toggleEntry(habit.id, hoursDate, m)}
+        />
+      )}
 
       <NotificationSheet
         open={notifOpen}

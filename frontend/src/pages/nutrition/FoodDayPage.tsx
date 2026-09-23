@@ -7,10 +7,12 @@ import { CalorieRing } from '../../components/nutrition/CalorieRing';
 import { MacroBars } from '../../components/nutrition/MacroBars';
 import { PortionSheet, type PortionTarget } from '../../components/nutrition/PortionSheet';
 import { FoodCalendarSheet } from '../../components/nutrition/FoodCalendarSheet';
+import { WeightSheet } from '../../components/nutrition/WeightSheet';
+import { InsightsCard } from '../../components/nutrition/InsightsCard';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { toDateString } from '../../utils/dates';
 import { MEALS, NUTRITION_COLOR, fmt, formatDayTitle, mealByTime, sumMacros } from '../../utils/nutrition';
-import type { FoodLogEntry } from '../../types';
+import type { FoodLogEntry, NutritionGoal } from '../../types';
 
 function shiftDate(date: string, days: number): string {
   return toDateString(addDays(parseISO(date), days));
@@ -18,13 +20,15 @@ function shiftDate(date: string, days: number): string {
 
 export function FoodDayPage() {
   const { foodDate: date, navigate } = useNavStore();
-  const { days, loadDay, updateEntry, removeEntry, copyDay } = useNutritionStore();
+  const { days, plans, loadDay, loadPlan, saveWeight, updateEntry, removeEntry, copyDay } = useNutritionStore();
   const day = days[date];
+  const plan = plans[date];
   const today = toDateString(new Date());
 
   const [editing, setEditing] = useState<FoodLogEntry | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [weightOpen, setWeightOpen] = useState(false);
 
   useBackButton(() => navigate('hub'));
   useMainButton('Добавить еду', () =>
@@ -33,7 +37,18 @@ export function FoodDayPage() {
 
   useEffect(() => {
     loadDay(date);
-  }, [date, loadDay]);
+    loadPlan(date);
+  }, [date, loadDay, loadPlan]);
+
+  // Model targets override the static goal: today's kcal (training-day aware) and protein.
+  const effectiveGoal = useMemo<NutritionGoal | null>(() => {
+    if (!day?.goal) return null;
+    return {
+      ...day.goal,
+      kcal: plan?.todayKcal ?? day.goal.kcal,
+      protein: plan?.proteinTarget ?? day.goal.protein,
+    };
+  }, [day?.goal, plan]);
 
   const go = (d: string) => {
     haptic('select');
@@ -97,9 +112,30 @@ export function FoodDayPage() {
 
         {/* Summary */}
         <div className="bg-tg-section rounded-2xl p-4 flex items-center gap-5">
-          <CalorieRing eaten={day?.totals.kcal ?? 0} goal={day?.goal?.kcal ?? null} size={130} stroke={11} />
-          <MacroBars totals={day?.totals ?? { kcal: 0, protein: 0, fat: 0, carbs: 0 }} goal={day?.goal ?? null} />
+          <CalorieRing eaten={day?.totals.kcal ?? 0} goal={effectiveGoal?.kcal ?? null} size={130} stroke={11} />
+          <MacroBars totals={day?.totals ?? { kcal: 0, protein: 0, fat: 0, carbs: 0 }} goal={effectiveGoal} />
         </div>
+
+        {/* Day context: target source, training, weight, sleep */}
+        {plan && plan.mode !== 'none' && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            <Chip>{plan.mode === 'adaptive' ? `📈 Норма по твоему расходу ~${fmt(plan.tdee ?? 0)}` : '🎯 Норма по цели'}</Chip>
+            {plan.isTrainingDay && <Chip>💪 Тренировка +{plan.trainingBonus}</Chip>}
+            {plan.sleepLastNightH !== null && <Chip>😴 {fmt(plan.sleepLastNightH, 1)} ч</Chip>}
+          </div>
+        )}
+
+        <button
+          onClick={() => setWeightOpen(true)}
+          className="w-full mt-3 bg-tg-section rounded-xl px-4 py-3 flex items-center justify-between active:opacity-70"
+        >
+          <span className="text-sm text-tg-text">
+            ⚖️ {plan?.weightKg != null ? `Вес: ${fmt(plan.weightKg, 1)} кг` : date === today ? 'Взвеситься' : 'Вес не записан'}
+          </span>
+          {plan?.trendKg != null && <span className="text-xs text-tg-hint">тренд {fmt(plan.trendKg, 1)} кг</span>}
+        </button>
+
+        {plan && plan.insights.length > 0 && <InsightsCard insights={plan.insights} />}
 
         {/* Shortcuts */}
         <div className="flex gap-2 mt-3">
@@ -192,6 +228,16 @@ export function FoodDayPage() {
         }}
       />
 
+      <WeightSheet
+        open={weightOpen}
+        initialKg={plan?.weightKg ?? plan?.trendKg ?? null}
+        onClose={() => setWeightOpen(false)}
+        onSave={async (kg) => {
+          await saveWeight(date, kg);
+          haptic('success');
+        }}
+      />
+
       <FoodCalendarSheet
         open={calendarOpen}
         selectedDate={date}
@@ -200,4 +246,8 @@ export function FoodDayPage() {
       />
     </motion.div>
   );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return <span className="text-[11px] px-2 py-1 rounded-full bg-tg-section text-tg-hint">{children}</span>;
 }

@@ -6,7 +6,8 @@ import { Heatmap } from '../../components/Heatmap';
 import { StatCard } from '../../components/StatCard';
 import { WeightChart } from '../../components/nutrition/WeightChart';
 import { useBackButton, useMainButton } from '../../hooks/useTelegramButtons';
-import { fetchStats } from '../../api/nutrition';
+import { fetchPlan, fetchStats } from '../../api/nutrition';
+import { InsightsCard } from '../../components/nutrition/InsightsCard';
 import { toDateString } from '../../utils/dates';
 import {
   NUTRITION_COLOR,
@@ -17,7 +18,7 @@ import {
   sumMacros,
   targetStreak,
 } from '../../utils/nutrition';
-import type { DayTotals, NutritionStats } from '../../types';
+import type { DayTotals, NutritionStats, Plan } from '../../types';
 
 function average(days: DayTotals[]) {
   if (days.length === 0) return null;
@@ -29,6 +30,7 @@ export function FoodStatsPage() {
   const navigate = useNavStore((s) => s.navigate);
   const [stats, setStats] = useState<NutritionStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
   const today = toDateString(new Date());
 
   useBackButton(() => navigate('food-day'));
@@ -38,6 +40,7 @@ export function FoodStatsPage() {
     fetchStats(toDateString(subDays(new Date(), 400)), today)
       .then(setStats)
       .catch((e) => setError(e.message));
+    fetchPlan(today).then(setPlan).catch(() => setPlan(null));
   }, [today]);
 
   if (error) return <div className="scrollable flex items-center justify-center text-tg-hint">{error}</div>;
@@ -52,7 +55,8 @@ export function FoodStatsPage() {
   const avg30 = average(last30);
   const onTarget30 = goalKcal ? last30.filter((d) => isOnTarget(d.kcal, goalKcal)).length : null;
   const streak = goalKcal ? targetStreak(stats.days, goalKcal, today) : null;
-  const f = computeForecast(stats.goal, stats.weights, today);
+  // Forecast runs on the smoothed trend, not on raw 0.5 kg-step weigh-ins.
+  const f = computeForecast(stats.goal, stats.trend.map((p) => ({ date: p.date, weightKg: p.trendKg })), today);
 
   const heat = stats.days.map((d, i) => ({ id: i, date: d.date, value: goalLevel(d.kcal, goalKcal) }));
 
@@ -87,6 +91,30 @@ export function FoodStatsPage() {
           </div>
         )}
 
+        {/* Model */}
+        {plan && plan.mode !== 'none' && (
+          <div className="bg-tg-section rounded-2xl p-4 text-sm text-tg-text flex flex-col gap-1">
+            <div className="text-xs text-tg-hint mb-1">Модель</div>
+            {plan.mode === 'adaptive' ? (
+              <>
+                <div>Твой реальный расход: ~{fmt(plan.tdee ?? 0)} ккал/день ({plan.completeDays} полных дней)</div>
+                <div>
+                  {(plan.dailyDelta ?? 0) >= 0 ? 'Профицит' : 'Дефицит'} под цель: {fmt(Math.abs(plan.dailyDelta ?? 0))} ккал →
+                  норма ~{fmt(plan.baseKcal ?? 0)} ккал
+                </div>
+              </>
+            ) : (
+              <div>Пока норма по цели: {fmt(plan.baseKcal ?? 0)} ккал. Реальный расход посчитаю по дневнику и весам</div>
+            )}
+            {plan.trainingsPerWeek !== null && (
+              <div>
+                Тренировок: {fmt(plan.trainingsPerWeek, 1)}/нед · в дни тренировок +{plan.trainingBonus} ккал
+              </div>
+            )}
+          </div>
+        )}
+        {plan && plan.insights.length > 0 && <InsightsCard insights={plan.insights} />}
+
         {/* Calendar */}
         <div className="bg-tg-section rounded-2xl p-4">
           <Heatmap entries={heat} color={NUTRITION_COLOR} onSelect={(date) => navigate('food-day', { foodDate: date })} />
@@ -103,7 +131,7 @@ export function FoodStatsPage() {
               Записать
             </button>
           </div>
-          <WeightChart weights={stats.weights} goal={stats.goal} projectedKg={f.projectedKg} />
+          <WeightChart weights={stats.weights} trend={stats.trend} goal={stats.goal} projectedKg={f.projectedKg} />
           <ForecastSummary f={f} />
         </div>
       </div>

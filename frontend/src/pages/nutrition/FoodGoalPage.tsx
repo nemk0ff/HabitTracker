@@ -4,11 +4,13 @@ import { parseISO, format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { useNavStore } from '../../stores/navStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
+import { useHabitsStore } from '../../stores/habitsStore';
+import { isHoursHabit } from '../../utils/habits';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { deleteWeight, fetchStats, saveWeight } from '../../api/nutrition';
 import { toDateString } from '../../utils/dates';
 import { ACTIVITY_LEVELS, NUTRITION_COLOR, calculateGoal, fmt, type Sex } from '../../utils/nutrition';
-import type { WeightPoint } from '../../types';
+import type { Habit, WeightPoint } from '../../types';
 
 const CALC_STORAGE_KEY = 'nutrition-calc-profile';
 
@@ -43,6 +45,7 @@ const str = (n: number | null | undefined) => (n === null || n === undefined ? '
 export function FoodGoalPage() {
   const navigate = useNavStore((s) => s.navigate);
   const { goal, goalLoaded, loadGoal, setGoal } = useNutritionStore();
+  const habits = useHabitsStore((s) => s.habits);
   const today = toDateString(new Date());
 
   const [kcal, setKcal] = useState('');
@@ -52,6 +55,8 @@ export function FoodGoalPage() {
   const [startWeight, setStartWeight] = useState('');
   const [targetWeight, setTargetWeight] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  const [trainingHabitId, setTrainingHabitId] = useState<number | null>(null);
+  const [sleepHabitId, setSleepHabitId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [weights, setWeights] = useState<WeightPoint[]>([]);
@@ -81,6 +86,8 @@ export function FoodGoalPage() {
     setStartWeight(str(goal.startWeightKg));
     setTargetWeight(str(goal.targetWeightKg));
     setTargetDate(goal.targetDate ?? '');
+    setTrainingHabitId(goal.trainingHabitId);
+    setSleepHabitId(goal.sleepHabitId);
   }, [goal]);
 
   const kcalNum = num(kcal);
@@ -99,6 +106,8 @@ export function FoodGoalPage() {
         startWeightKg: opt(startWeight),
         targetWeightKg: opt(targetWeight),
         targetDate: targetDate || null,
+        trainingHabitId,
+        sleepHabitId,
       });
       haptic('success');
       navigate('food-day');
@@ -273,6 +282,27 @@ export function FoodGoalPage() {
           </AnimatePresence>
         </section>
 
+        {/* Linked habits */}
+        <section>
+          <h2 className="text-base font-semibold text-tg-text mb-1">Связь с привычками</h2>
+          <p className="text-xs text-tg-hint mb-2">
+            В дни тренировок норма чуть выше (углеводы), в дни отдыха — чуть ниже; сон идёт в подсказки
+          </p>
+          <HabitPicker
+            label="💪 Тренировки"
+            habits={habits.filter((h) => !isHoursHabit(h))}
+            value={trainingHabitId}
+            onChange={setTrainingHabitId}
+          />
+          <HabitPicker
+            label="😴 Сон (часы)"
+            habits={habits.filter(isHoursHabit)}
+            value={sleepHabitId}
+            onChange={setSleepHabitId}
+            empty="Нет привычки с типом «Часы» — создай её в трекере привычек"
+          />
+        </section>
+
         {/* Daily targets */}
         <section>
           <h2 className="text-base font-semibold text-tg-text mb-2">Норма на день</h2>
@@ -307,6 +337,47 @@ function Num({ label, value, onChange, secondary }: { label: string; value: stri
         inputMode="decimal"
         className={`w-full px-4 py-3 rounded-xl text-tg-text text-base outline-none ${secondary ? 'bg-tg-secondary' : 'bg-tg-section'}`}
       />
+    </div>
+  );
+}
+
+function HabitPicker({
+  label,
+  habits,
+  value,
+  onChange,
+  empty,
+}: {
+  label: string;
+  habits: Habit[];
+  value: number | null;
+  onChange: (id: number | null) => void;
+  empty?: string;
+}) {
+  return (
+    <div className="mb-2">
+      <div className="text-xs text-tg-hint mb-1.5 px-1">{label}</div>
+      {habits.length === 0 ? (
+        <p className="text-xs text-tg-hint px-1">{empty ?? 'Нет подходящих привычек'}</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {[{ id: null, name: 'Не учитывать', icon: null } as const, ...habits].map((h) => (
+            <button
+              key={h.id ?? 'none'}
+              onClick={() => onChange(h.id)}
+              className="px-3 py-1.5 rounded-full text-xs font-medium"
+              style={
+                value === h.id
+                  ? { backgroundColor: NUTRITION_COLOR, color: '#fff' }
+                  : { backgroundColor: 'var(--tg-theme-section-bg-color)', color: 'var(--tg-theme-text-color)' }
+              }
+            >
+              {h.icon ? `${h.icon} ` : ''}
+              {h.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

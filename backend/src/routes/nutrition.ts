@@ -5,7 +5,8 @@ import { nutritionGuard } from '../middleware/featureGuard.js';
 import { track } from '../services/analytics.js';
 import { searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
 import { normalizeSearch, round1, scaleMacros, sumMacros } from '../services/nutrition/nutritionMath.js';
-import { foodParser } from '../services/nutrition/foodParser.js';
+import { foodParser, FoodParseError } from '../services/nutrition/foodParser.js';
+import { computePlan, weightTrend } from '../services/nutrition/model.js';
 
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 type Meal = (typeof MEALS)[number];
@@ -57,6 +58,8 @@ function serializeGoal(g: NutritionGoal | null) {
     startWeightKg: g.startWeightKg,
     targetWeightKg: g.targetWeightKg,
     targetDate: g.targetDate ? dayString(g.targetDate) : null,
+    trainingHabitId: g.trainingHabitId,
+    sleepHabitId: g.sleepHabitId,
   };
 }
 
@@ -353,10 +356,19 @@ export async function nutritionRoutes(app: FastifyInstance) {
     const userId = (request as any).user.userId;
     const text = request.body?.text?.trim();
     if (!text) return reply.status(400).send({ error: 'text is required' });
+    if (text.length > 2000) return reply.status(400).send({ error: 'Слишком длинный текст' });
     if (!foodParser.available) {
-      return reply.status(501).send({ error: 'Разбор текста через ИИ скоро появится' });
+      return reply.status(501).send({ error: 'Разбор текста через ИИ не настроен (нет ANTHROPIC_API_KEY)' });
     }
-    return { items: await foodParser.parse(text, userId) };
+    try {
+      const items = await foodParser.parse(text, userId);
+      track({ userId, event: 'food_parsed', category: 'miniapp', metadata: { items: items.length } });
+      return { items };
+    } catch (e) {
+      if (e instanceof FoodParseError) return reply.status(422).send({ error: e.message });
+      request.log.error(e, 'food parse failed');
+      return reply.status(502).send({ error: 'Claude сейчас недоступен, попробуй ещё раз' });
+    }
   });
 
   // ─── Stats, goal, weight ────────────────────────────────────────────────────
@@ -379,7 +391,9 @@ export async function nutritionRoutes(app: FastifyInstance) {
       prisma.nutritionGoal.findUnique({ where: { userId } }),
     ]);
 
+    const weightPoints = weights.map((w) => ({ date: dayString(w.date), weightKg: w.weightKg }));
     return {
+      trend: weightTrend(weightPoints, dayString(to)).map((p) => ({ date: p.date, trendKg: p.trendKg })),
       days: days.map((d) => ({
         date: dayString(d.date),
         kcal: round1(d._sum.kcal ?? 0),
@@ -387,9 +401,18 @@ export async function nutritionRoutes(app: FastifyInstance) {
         fat: round1(d._sum.fat ?? 0),
         carbs: round1(d._sum.carbs ?? 0),
       })),
-      weights: weights.map((w) => ({ date: dayString(w.date), weightKg: w.weightKg })),
+      weights: weightPoints,
       goal: serializeGoal(goal),
     };
+  });
+
+  /** Today's target from the adaptive model + insights (see services/nutrition/model.ts). */
+  app.get<{ Querystring: { date?: string } }>('/nutrition/plan', async (request, reply) => {
+    const userId = (request as any).user.userId;
+    const date = parseDay(request.query.date);
+    if (!date) return reply.status(400).send({ error: 'date must be YYYY-MM-DD' });
+    const { trend, ...plan } = await computePlan(userId, dayString(date));
+    return plan;
   });
 
   app.get('/nutrition/goal', async (request) => {
@@ -406,6 +429,8 @@ export async function nutritionRoutes(app: FastifyInstance) {
       startWeightKg?: number | null;
       targetWeightKg?: number | null;
       targetDate?: string | null;
+      trainingHabitId?: number | null;
+      sleepHabitId?: number | null;
     };
   }>('/nutrition/goal', async (request, reply) => {
     const userId = (request as any).user.userId;
@@ -419,7 +444,19 @@ export async function nutritionRoutes(app: FastifyInstance) {
       targetDate = parseDay(b.targetDate);
       if (!targetDate) return reply.status(400).send({ error: 'targetDate must be YYYY-MM-DD' });
     }
+    // Linked habits must be the user's own; sleep must be an hours habit.
+    const ownHabit = async (id: number | null | undefined, measure?: string) => {
+      if (id == null) return null;
+      const h = await prisma.habit.findFirst({ where: { id, userId } });
+      return h && (measure === undefined || h.measure === measure) ? h.id : undefined;
+    };
+    const trainingHabitId = await ownHabit(b.trainingHabitId);
+    const sleepHabitId = await ownHabit(b.sleepHabitId, 'hours');
+    if (trainingHabitId === undefined) return reply.status(400).send({ error: 'invalid trainingHabitId' });
+    if (sleepHabitId === undefined) return reply.status(400).send({ error: 'sleepHabitId must be your hours habit' });
     const data = {
+      trainingHabitId,
+      sleepHabitId,
       kcal: Math.round(b.kcal),
       protein: optNum(b.protein) !== null ? Math.round(b.protein!) : null,
       fat: optNum(b.fat) !== null ? Math.round(b.fat!) : null,

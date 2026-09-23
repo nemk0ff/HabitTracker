@@ -57,6 +57,7 @@ export async function adminRoutes(app: FastifyInstance) {
             color: h.color,
             icon: h.icon,
             binary: h.binary,
+            measure: h.measure,
             createdAt: h.createdAt.toISOString(),
             entries: h.entries.map((e) => ({
               id: e.id,

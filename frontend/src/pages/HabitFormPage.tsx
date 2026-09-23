@@ -16,6 +16,8 @@ export function HabitFormPage() {
   const [color, setColor] = useState(existing?.color || HABIT_COLORS[0]!);
   const [icon, setIcon] = useState<string | null>(existing?.icon || null);
   const [binary, setBinary] = useState(existing?.binary ?? false);
+  // Hours habits store minutes; the kind is chosen on creation only (entries aren't converted).
+  const [hours, setHours] = useState(existing?.measure === 'hours');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -41,7 +43,7 @@ export function HabitFormPage() {
           await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary });
           navigate('habit');
         } else {
-          await addHabit({ name: name.trim(), color, icon: icon || undefined, binary });
+          await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null });
           navigate('home');
         }
         webapp.HapticFeedback?.notificationOccurred('success');
@@ -57,7 +59,7 @@ export function HabitFormPage() {
       webapp.MainButton?.offClick?.(mainHandler);
       webapp.MainButton?.hide?.();
     };
-  }, [name, color, icon, binary, isEdit, selectedHabitId, saving, navigate, addHabit, editHabit]);
+  }, [name, color, icon, binary, hours, isEdit, selectedHabitId, saving, navigate, addHabit, editHabit]);
 
   const handleSubmit = async () => {
     if (!name.trim() || saving) return;
@@ -67,7 +69,7 @@ export function HabitFormPage() {
         await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary });
         navigate('habit');
       } else {
-        await addHabit({ name: name.trim(), color, icon: icon || undefined, binary });
+        await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null });
         navigate('home');
       }
     } finally {
@@ -124,7 +126,37 @@ export function HabitFormPage() {
           </div>
         </div>
 
+        {/* Kind: hours (create only) */}
+        {!isEdit ? (
+          <div className="mb-6">
+            <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
+              Что отмечаем
+            </label>
+            <div className="flex bg-tg-section rounded-xl p-1">
+              {(
+                [
+                  [false, 'Выполнение'],
+                  [true, 'Часы (сон)'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setHours(value)}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
+                  style={hours === value ? { backgroundColor: color, color: '#fff' } : { color: 'var(--tg-theme-text-color)' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          hours && <p className="text-xs text-tg-hint mb-6 px-1">Тип: часы — сохраняется при создании привычки</p>
+        )}
+
         {/* Binary mode */}
+        {!hours && (
         <div className="mb-6">
           <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
             Режим
@@ -147,6 +179,7 @@ export function HabitFormPage() {
             </button>
           </div>
         </div>
+        )}
 
         {/* Preview */}
         <div className="mb-6">

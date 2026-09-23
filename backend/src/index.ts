@@ -14,6 +14,7 @@ import { startScheduler } from './services/scheduler.js';
 import { bot, startBot } from './services/bot.js';
 import { startAlerts } from './services/alerts.js';
 import { startSessionWarningCron } from './services/claudeSessions.js';
+import { startWeeklySummaryCron } from './services/nutrition/weeklySummary.js';
 const PORT = Number(process.env.PORT) || 3001;
 
 const app = Fastify({ logger: true });
@@ -62,6 +63,7 @@ try {
   startBot();
   startAlerts();
   startSessionWarningCron();
+  startWeeklySummaryCron();
 } catch (err) {
   app.log.error(err);
   process.exit(1);

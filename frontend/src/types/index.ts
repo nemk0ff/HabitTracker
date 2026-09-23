@@ -10,6 +10,8 @@ export interface Habit {
   color: string;
   icon: string | null;
   binary: boolean;
+  /** null = intensity levels; 'hours' = entry value is minutes. */
+  measure: 'hours' | null;
   createdAt: string;
   entries: HabitEntry[];
 }
@@ -108,6 +110,8 @@ export interface NutritionGoal {
   startWeightKg: number | null;
   targetWeightKg: number | null;
   targetDate: string | null;
+  trainingHabitId: number | null;
+  sleepHabitId: number | null;
 }
 
 export interface FoodDay {
@@ -127,9 +131,37 @@ export interface WeightPoint {
 }
 
 export interface NutritionStats {
+  /** Daily EMA-smoothed weight, from the first weigh-in. */
+  trend: { date: string; trendKg: number }[];
   days: DayTotals[];
   weights: WeightPoint[];
   goal: NutritionGoal | null;
+}
+
+export interface Insight {
+  level: 'good' | 'info' | 'warn';
+  text: string;
+}
+
+/** Output of the backend nutrition model (GET /api/nutrition/plan). */
+export interface Plan {
+  date: string;
+  mode: 'adaptive' | 'goal' | 'none';
+  tdee: number | null;
+  completeDays: number;
+  dailyDelta: number | null;
+  baseKcal: number | null;
+  todayKcal: number | null;
+  isTrainingDay: boolean;
+  trainingBonus: number;
+  proteinTarget: number | null;
+  weightKg: number | null;
+  trendKg: number | null;
+  trendKgPerWeek: number | null;
+  trainingsPerWeek: number | null;
+  sleepLastNightH: number | null;
+  sleepAvg7H: number | null;
+  insights: Insight[];
 }
 
 /** Result of free-text parsing (LLM, stage 2). Macros are for `grams`. */

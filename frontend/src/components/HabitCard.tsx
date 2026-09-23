@@ -4,6 +4,8 @@ import { MiniHeatmap } from './MiniHeatmap';
 import { calculateStreak, toDateString } from '../utils/dates';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
+import { HoursSheet } from './HoursSheet';
+import { formatHours, isHoursHabit, levelEntries } from '../utils/habits';
 import type { Habit } from '../types';
 
 interface Props {
@@ -18,6 +20,9 @@ export function HabitCard({ habit, readOnly = false }: Props) {
   const todayStr = toDateString(new Date());
   const todayEntry = habit.entries.find((e) => e.date === todayStr);
   const isDoneToday = todayEntry && todayEntry.value > 0;
+
+  const hours = isHoursHabit(habit);
+  const [hoursOpen, setHoursOpen] = useState(false);
 
   const heatmapRef = useRef<HTMLDivElement>(null);
   const [weeks, setWeeks] = useState(18);
@@ -42,6 +47,10 @@ export function HabitCard({ habit, readOnly = false }: Props) {
 
   const handleCheck = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (hours) {
+      setHoursOpen(true);
+      return;
+    }
     const newValue = isDoneToday ? 0 : 1;
     toggleEntry(habit.id, todayStr, newValue);
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
@@ -63,7 +72,7 @@ export function HabitCard({ habit, readOnly = false }: Props) {
         {/* Heatmap — takes all available space */}
         <div ref={heatmapRef} className="flex-1 min-w-0 overflow-hidden">
           <MiniHeatmap
-            entries={habit.entries}
+            entries={levelEntries(habit)}
             color={habit.color}
             binary={habit.binary}
             weeks={weeks}
@@ -78,13 +87,16 @@ export function HabitCard({ habit, readOnly = false }: Props) {
             <button
               onClick={readOnly ? undefined : handleCheck}
               disabled={readOnly}
-              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0"
+              className={`${hours && isDoneToday ? 'px-2 min-w-8' : 'w-8'} h-8 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0`}
               style={{
                 backgroundColor: isDoneToday ? habit.color : 'transparent',
                 border: isDoneToday ? 'none' : `2px solid ${habit.color}`,
               }}
             >
-              {isDoneToday && (
+              {hours && isDoneToday && (
+                <span className="text-xs font-bold text-white whitespace-nowrap">{formatHours(todayEntry!.value)}</span>
+              )}
+              {!hours && isDoneToday && (
                 <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
                   <path
                     d="M4 9.5L7.5 13L14 5"
@@ -119,6 +131,17 @@ export function HabitCard({ habit, readOnly = false }: Props) {
           )}
         </div>
       </div>
+
+      {hours && (
+        <HoursSheet
+          date={hoursOpen ? todayStr : null}
+          title={habit.name}
+          minutes={todayEntry?.value ?? 0}
+          color={habit.color}
+          onClose={() => setHoursOpen(false)}
+          onSave={(m) => toggleEntry(habit.id, todayStr, m)}
+        />
+      )}
     </motion.div>
   );
 }

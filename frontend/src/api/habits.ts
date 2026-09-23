@@ -10,6 +10,7 @@ export function createHabit(data: {
   color?: string;
   icon?: string;
   binary?: boolean;
+  measure?: 'hours' | null;
 }): Promise<Habit> {
   return api<Habit>('/api/habits', {
     method: 'POST',

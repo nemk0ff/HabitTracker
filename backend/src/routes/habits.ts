@@ -3,6 +3,9 @@ import { prisma } from '../db.js';
 import { authGuard, JwtPayload } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
 
+/** Non-level habit kinds. The measure is fixed at creation — entries of an existing habit aren't converted. */
+export const HABIT_MEASURES = ['hours'];
+
 export async function habitsRoutes(app: FastifyInstance) {
   app.addHook('onRequest', authGuard);
 
@@ -30,6 +33,7 @@ export async function habitsRoutes(app: FastifyInstance) {
       color: h.color,
       icon: h.icon,
       binary: h.binary,
+      measure: h.measure,
       createdAt: h.createdAt.toISOString(),
       entries: h.entries.map((e) => ({
         id: e.id,
@@ -39,11 +43,14 @@ export async function habitsRoutes(app: FastifyInstance) {
     }));
   });
 
-  app.post<{ Body: { name: string; color?: string; icon?: string; binary?: boolean } }>(
+  app.post<{ Body: { name: string; color?: string; icon?: string; binary?: boolean; measure?: string | null } }>(
     '/habits',
     async (request, reply) => {
       const { userId } = (request as any).user as JwtPayload;
-      const { name, color, icon, binary } = request.body;
+      const { name, color, icon, binary, measure } = request.body;
+      if (measure != null && !HABIT_MEASURES.includes(measure)) {
+        return reply.status(400).send({ error: `measure must be one of ${HABIT_MEASURES.join(', ')}` });
+      }
 
       const trimmedName = name?.trim();
       if (!trimmedName) {
@@ -59,7 +66,8 @@ export async function habitsRoutes(app: FastifyInstance) {
           name: trimmedName,
           color: color || '#4CAF50',
           icon: icon || null,
-          binary: binary ?? false,
+          binary: measure ? false : (binary ?? false),
+          measure: measure ?? null,
         },
       });
 
@@ -77,6 +85,7 @@ export async function habitsRoutes(app: FastifyInstance) {
         color: habit.color,
         icon: habit.icon,
         binary: habit.binary,
+        measure: habit.measure,
         createdAt: habit.createdAt.toISOString(),
         entries: [],
       };
@@ -119,6 +128,7 @@ export async function habitsRoutes(app: FastifyInstance) {
         color: habit.color,
         icon: habit.icon,
         binary: habit.binary,
+        measure: habit.measure,
         createdAt: habit.createdAt.toISOString(),
       };
     },

@@ -26,6 +26,11 @@ export async function entriesRoutes(app: FastifyInstance) {
       }
 
       const entryValue = value ?? 1;
+      // Hours habits store minutes (0–24h); level habits store 0–4.
+      const max = habit.measure === 'hours' ? 1440 : 4;
+      if (!Number.isInteger(entryValue) || entryValue < 0 || entryValue > max) {
+        return reply.status(400).send({ error: `value must be an integer 0..${max}` });
+      }
 
       if (entryValue === 0) {
         await prisma.habitEntry.deleteMany({

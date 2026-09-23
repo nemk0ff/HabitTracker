@@ -7,6 +7,7 @@ import type {
   NutritionGoal,
   NutritionStats,
   ParsedItem,
+  Plan,
   Serving,
   WeightPoint,
 } from '../types';
@@ -99,6 +100,10 @@ export function parseText(text: string): Promise<{ items: ParsedItem[] }> {
 
 export function fetchStats(from: string, to: string): Promise<NutritionStats> {
   return api<NutritionStats>(`${BASE}/stats?from=${from}&to=${to}`);
+}
+
+export function fetchPlan(date: string): Promise<Plan> {
+  return api<Plan>(`${BASE}/plan?date=${date}`);
 }
 
 export function fetchGoal(): Promise<NutritionGoal | null> {

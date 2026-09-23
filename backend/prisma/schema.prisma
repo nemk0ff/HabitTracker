@@ -49,6 +49,8 @@ model Habit {
   createdAt DateTime     @default(now())
   archived  Boolean      @default(false)
   binary    Boolean      @default(false)
+  /// null = intensity levels 1-4 (or done/not done when binary); "hours" = entry value is minutes
+  measure   String?
   entries   HabitEntry[]
   reminder  Reminder?
 
@@ -130,17 +132,20 @@ model FoodLogEntry {
 }
 
 model NutritionGoal {
-  id             Int       @id @default(autoincrement())
-  userId         Int       @unique
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kcal           Int
-  protein        Int?
-  fat            Int?
-  carbs          Int?
-  startWeightKg  Float?
-  targetWeightKg Float?
-  targetDate     DateTime?
-  updatedAt      DateTime  @updatedAt
+  id              Int       @id @default(autoincrement())
+  userId          Int       @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kcal            Int
+  protein         Int?
+  fat             Int?
+  carbs           Int?
+  startWeightKg   Float?
+  targetWeightKg  Float?
+  targetDate      DateTime?
+  /// Habits that feed the model: training days (done/not done) and sleep (hours)
+  trainingHabitId Int?
+  sleepHabitId    Int?
+  updatedAt       DateTime  @updatedAt
 }
 
 model WeightEntry {

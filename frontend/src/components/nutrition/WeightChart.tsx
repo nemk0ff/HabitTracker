@@ -5,6 +5,8 @@ import type { NutritionGoal, WeightPoint } from '../../types';
 
 interface Props {
   weights: WeightPoint[];
+  /** EMA-smoothed weight — drawn as the main line; raw weigh-ins are dots. */
+  trend: { date: string; trendKg: number }[];
   goal: NutritionGoal | null;
   projectedKg: number | null;
 }
@@ -13,8 +15,8 @@ const W = 320;
 const H = 160;
 const PAD = { l: 34, r: 10, t: 10, b: 22 };
 
-/** Actual weight (solid), plan line start→target (dotted), trend projection to the target date (dashed). */
-export function WeightChart({ weights, goal, projectedKg }: Props) {
+/** Weigh-ins (dots), smoothed trend (solid), plan line start→target (dotted), projection to the target date (dashed). */
+export function WeightChart({ weights, trend, goal, projectedKg }: Props) {
   if (weights.length === 0) {
     return <p className="text-sm text-tg-hint text-center py-8">Записывай вес хотя бы раз в неделю — здесь появится график</p>;
   }
@@ -27,7 +29,7 @@ export function WeightChart({ weights, goal, projectedKg }: Props) {
 
   const x0 = t(first.date);
   const x1 = Math.max(hasPlan ? t(goal!.targetDate!) : t(last.date), x0 + 86_400_000);
-  const ys = [...weights.map((w) => w.weightKg), startKg];
+  const ys = [...weights.map((w) => w.weightKg), ...trend.map((p) => p.trendKg), startKg];
   if (hasPlan) ys.push(goal!.targetWeightKg!);
   if (projectedKg !== null) ys.push(projectedKg);
   const yMin = Math.floor(Math.min(...ys) - 1);
@@ -36,7 +38,8 @@ export function WeightChart({ weights, goal, projectedKg }: Props) {
   const sx = (ms: number) => PAD.l + ((ms - x0) / (x1 - x0)) * (W - PAD.l - PAD.r);
   const sy = (kg: number) => PAD.t + (1 - (kg - yMin) / (yMax - yMin)) * (H - PAD.t - PAD.b);
 
-  const path = weights.map((w, i) => `${i ? 'L' : 'M'}${sx(t(w.date)).toFixed(1)},${sy(w.weightKg).toFixed(1)}`).join(' ');
+  const path = trend.map((p, i) => `${i ? 'L' : 'M'}${sx(t(p.date)).toFixed(1)},${sy(p.trendKg).toFixed(1)}`).join(' ');
+  const lastTrend = trend.length ? trend[trend.length - 1]! : null;
   const ticks = [yMin, (yMin + yMax) / 2, yMax];
 
   return (
@@ -62,10 +65,10 @@ export function WeightChart({ weights, goal, projectedKg }: Props) {
         />
       )}
 
-      {projectedKg !== null && hasPlan && (
+      {projectedKg !== null && hasPlan && lastTrend && (
         <line
-          x1={sx(t(last.date))}
-          y1={sy(last.weightKg)}
+          x1={sx(t(lastTrend.date))}
+          y1={sy(lastTrend.trendKg)}
           x2={sx(t(goal!.targetDate!))}
           y2={sy(projectedKg)}
           stroke={NUTRITION_COLOR}
@@ -77,7 +80,7 @@ export function WeightChart({ weights, goal, projectedKg }: Props) {
 
       <path d={path} fill="none" stroke={NUTRITION_COLOR} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
       {weights.map((w) => (
-        <circle key={w.date} cx={sx(t(w.date))} cy={sy(w.weightKg)} r={2.5} fill={NUTRITION_COLOR} />
+        <circle key={w.date} cx={sx(t(w.date))} cy={sy(w.weightKg)} r={2.5} fill={NUTRITION_COLOR} opacity={0.35} />
       ))}
 
       <text x={PAD.l} y={H - 6} fontSize={9} fill="var(--tg-theme-hint-color)">

@@ -11,7 +11,7 @@ import type { Food, Meal, ParsedItem } from '../../types';
 
 type Tab = 'search' | 'text';
 
-/** Demo draft for the text tab until the LLM parser (stage 2) is live. */
+/** Demo draft for the text tab when the backend has no Claude API key configured. */
 const DEMO_TEXT = '200 г куриной грудки и 150 г варёных макарон';
 const DEMO_ITEMS: ParsedItem[] = [
   { name: 'Куриная грудка отварная', grams: 200, kcal: 274, protein: 59.6, fat: 3.6, carbs: 1, foodId: null, estimated: false },
@@ -226,7 +226,7 @@ export function FoodAddPage() {
             {parseNote && (
               <div className="mt-3 rounded-xl bg-tg-section px-4 py-3 text-sm text-tg-hint">
                 {parseNote}
-                {draft.length === 0 && (
+                {draft.length === 0 && parseNote.includes('не настроен') && (
                   <button
                     onClick={() => {
                       setText(DEMO_TEXT);

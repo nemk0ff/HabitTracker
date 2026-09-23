@@ -1,18 +1,22 @@
 import { create } from 'zustand';
 import * as api from '../api/nutrition';
 import type { LogInput } from '../api/nutrition';
-import type { Food, FoodDay, FoodLogEntry, Meal, NutritionGoal } from '../types';
+import type { Food, FoodDay, FoodLogEntry, Meal, NutritionGoal, Plan } from '../types';
 import { sumMacros } from '../utils/nutrition';
 
 interface NutritionState {
   /** Diary days by YYYY-MM-DD. */
   days: Record<string, FoodDay>;
+  /** Model output by YYYY-MM-DD. */
+  plans: Record<string, Plan>;
   goal: NutritionGoal | null;
   goalLoaded: boolean;
   recent: Food[];
   error: string | null;
 
   loadDay: (date: string) => Promise<void>;
+  loadPlan: (date: string) => Promise<void>;
+  saveWeight: (date: string, weightKg: number) => Promise<void>;
   loadGoal: () => Promise<void>;
   loadRecent: () => Promise<void>;
   addEntry: (input: LogInput) => Promise<FoodLogEntry | null>;
@@ -39,6 +43,7 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
 
   return {
     days: {},
+    plans: {},
     goal: null,
     goalLoaded: false,
     recent: [],
@@ -51,6 +56,22 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
       } catch (e: any) {
         set({ error: e.message });
       }
+    },
+
+    loadPlan: async (date) => {
+      try {
+        const plan = await api.fetchPlan(date);
+        set((s) => ({ plans: { ...s.plans, [date]: plan } }));
+      } catch {
+        // the day screen falls back to the plain goal
+      }
+    },
+
+    saveWeight: async (date, weightKg) => {
+      await api.saveWeight(date, weightKg);
+      // Trend and targets depend on the weight — drop cached plans, reload this one.
+      set({ plans: {} });
+      await get().loadPlan(date);
     },
 
     loadGoal: async () => {
@@ -122,6 +143,7 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
       set((s) => ({
         goal: saved,
         goalLoaded: true,
+        plans: {},
         days: Object.fromEntries(Object.entries(s.days).map(([k, d]) => [k, { ...d, goal: saved }])),
       }));
     },

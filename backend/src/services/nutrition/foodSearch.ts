@@ -55,6 +55,7 @@ function atWordStart(text: string, stem: string): boolean {
 }
 
 async function searchLocal(userId: number, q: string): Promise<Food[]> {
+  if (!q) return [];
   const stems = searchStems(q);
   const rows = await prisma.food.findMany({
     where: {
@@ -172,6 +173,11 @@ async function searchOpenFoodFacts(q: string): Promise<Food[]> {
     }
   }
   return saved;
+}
+
+/** Local catalog only (seed + own + cached), best match first. No network. */
+export function searchLocalFoods(userId: number, rawQuery: string): Promise<Food[]> {
+  return searchLocal(userId, normalizeSearch(rawQuery));
 }
 
 export async function searchFoods(userId: number, rawQuery: string) {
