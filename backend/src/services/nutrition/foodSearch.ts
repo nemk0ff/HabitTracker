@@ -44,18 +44,31 @@ export function visibleTo(userId: number) {
   return { OR: [{ ownerId: null }, { ownerId: userId }] };
 }
 
+/** True when `stem` starts a word in `text` ("кол" starts "кола", not "шоколад"). */
+function atWordStart(text: string, stem: string): boolean {
+  let i = text.indexOf(stem);
+  while (i >= 0) {
+    if (i === 0 || !/[a-zа-я0-9]/.test(text[i - 1]!)) return true;
+    i = text.indexOf(stem, i + 1);
+  }
+  return false;
+}
+
 async function searchLocal(userId: number, q: string): Promise<Food[]> {
-  const words = q.split(' ').filter(Boolean);
+  const stems = searchStems(q);
   const rows = await prisma.food.findMany({
     where: {
-      AND: [visibleTo(userId), ...searchStems(q).map((w) => ({ searchName: { contains: w } }))],
+      AND: [visibleTo(userId), ...stems.map((w) => ({ searchName: { contains: w } }))],
     },
     take: 200,
   });
 
+  // Word-start matches dominate, so own products don't outrank a real match just
+  // because the stem appears mid-word ("кола" vs "шоколад").
   const score = (f: Food) =>
-    (f.ownerId === userId ? 1000 : 0) +
-    (f.searchName.startsWith(q) ? 300 : f.searchName.startsWith(words[0]) ? 150 : 0) +
+    stems.filter((s) => atWordStart(f.searchName, s)).length * 400 +
+    (f.searchName.startsWith(q) ? 300 : f.searchName.startsWith(stems[0]!) ? 150 : 0) +
+    (f.ownerId === userId ? 200 : 0) +
     (f.source === 'seed' ? 50 : 0) +
     Math.min(f.usageCount, 100) * 5 -
     f.searchName.length;
