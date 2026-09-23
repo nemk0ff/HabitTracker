@@ -51,6 +51,7 @@ CLAUDE_PROXY="http://127.0.0.1:3128"  # optional: HTTP proxy (alternative to SOC
 KEEP_ALIVE_SECRET="random_secret"     # Bearer token for /api/claude/session-start (shared with keep-alive.mjs)
 CLAUDE_SESSION_STATE_PATH="/tmp/claude-session.json" # where claudeSessions.ts persists session state (defaults to /tmp/claude-session.json)
 CLAUDE_CODE_OAUTH_TOKEN="..."         # long-lived Claude Code OAuth token for keep-alive.mjs on VPS
+ANTHROPIC_API_KEY="sk-ant-..."        # Claude features (food text parsing, weekly summary); without it /nutrition/parse → 501, summary uses a template
 NUTRITION_USER_IDS="123,456"          # optional: telegram ids allowed into the nutrition module (defaults to DEVELOPER_CHAT_ID; in dev with neither set, open to all)
 ```
 
@@ -116,6 +117,9 @@ Aggregate helpers: `getDau()`, `getWau()`, `getNewUsersCount()`, `getTopEvents()
 - **Mini App:** `POST /api/auth` returns `user.isAdmin`; `HomePage` shows the "Все привычки" button only when it's true, navigating to the `'admin'` screen (`AdminPage.tsx`, read-only `HabitCard`s grouped by user, data from `GET /api/admin/habits`).
 - **Bot:** developer-only commands `/stats`, `/users`, `/activity`, `/user <id>`, `/claude_session`. The user/activity views are derived from `AnalyticsEvent` via `getUserOverview` / `getRecentActivity` / `getUserDetail` in `analytics.ts` — "last seen" is only as good as the tracked events.
 
+### Hours Habits
+`Habit.measure = 'hours'` (set at creation only; entries are not converted on edit) stores **minutes** in `HabitEntry.value` (0–1440, validated in `routes/entries.ts`; level habits stay 0–4). Frontend: `utils/habits.ts` buckets minutes into heatmap levels (<5h / 5–7h / 7h+), `HoursSheet` is the hours+half-hours picker used by `HabitCard` and `HabitDetailPage`. The developer's "sleep" habit was migrated from levels 1/2/3 to 180/300/480 minutes on 2026-09-24. `NutritionGoal.trainingHabitId` / `sleepHabitId` link habits into the nutrition model.
+
 ### Entry Value Semantics
 `HabitEntry.value` encodes intensity: `1`=light, `2`=medium, `3`=hard, `4`=extra. For **binary habits** (`Habit.binary=true`) the UI only records `value=1` (done) or deletes the entry (not done) — no intensity picker shown. Sending `value=0` to `POST /habits/:id/entries` deletes the entry for that date.
 
@@ -162,8 +166,11 @@ Food diary with kcal/macros, goal and weight tracking. MVP is gated to specific 
 
 - **Data:** `Food` is the catalog, macros **per 100 g**: `source` = `seed` (base catalog), `custom` (user's own, `ownerId` set — Пятёрочка/Лавка/restaurant items with `sourceUrl`), `off` (Open Food Facts cache, `externalId`=EAN), `llm` (reserved). `FoodLogEntry` stores a **snapshot** of macros already scaled to `grams`, so editing/deleting a `Food` never rewrites history (`foodId` → SetNull). Diary dates follow the `HabitEntry` convention (client local `YYYY-MM-DD` stored as UTC midnight). `NutritionGoal` is 1:1 with User; `WeightEntry` unique per (user, date).
 - **Search (`services/nutrition/foodSearch.ts`):** SQLite `contains` is case-insensitive only for ASCII, so every `Food` has a `searchName` normalized by `normalizeSearch` (lower-case, ё→е) and queries go through `searchStems` (crude ending-strip so "курица" matches "куриная"). Always write `searchName` when creating/renaming foods. If the local catalog yields < 5 hits, it queries Open Food Facts Search-a-licious (`search.openfoodfacts.org`, 3 s timeout), keeps only hits containing every stem, and upserts them as `source='off'`.
-- **LLM hook (stage 2, not implemented):** `services/nutrition/foodParser.ts` defines `FoodParser`/`ParsedItem`; the exported `foodParser` is a `NotImplementedParser`, so `POST /api/nutrition/parse` returns 501. The Mini App "✨ Текстом" tab already speaks this contract (`ParsedItemsPreview`, demo items). Plugging in a Claude-backed parser = replace the export.
-- **Frontend:** `pages/nutrition/*` (day, add, product form, stats, goal), `components/nutrition/*`, `stores/nutritionStore.ts` (per-date day cache), `utils/nutrition.ts` (goal heat levels, weight forecast via least-squares trend over 28 days, Mifflin–St Jeor goal calculator, 7700 kcal ≈ 1 kg). `Heatmap` has a select mode (`onSelect`) used as the diary calendar. `PortionSheet` resets its inputs whenever the `target` object identity changes — memoize the target.
+- **Claude (`services/claude.ts`):** shared `@anthropic-ai/sdk` client, model `claude-opus-5`, routed through `CLAUDE_PROXY` via `undici.ProxyAgent` (api.anthropic.com isn't reachable directly from the VPS). Keep `undici` on v7 — v8 needs Node 22 and prod runs Node 20. Requests use beta `server-side-fallback-2026-07-01` + `fallbacks: "default"`.
+- **Text parsing (`services/nutrition/foodParser.ts`):** Claude returns items via `output_config.format` JSON schema (name, grams, `own_food_id`, `catalog_query`, its own per-100g estimate). Server-side each item is matched: own product by id → local catalog (`searchLocalFoods`, seed/own only) → Claude's estimate (`estimated: true`). Nothing is written until the user confirms in the "✨ Текстом" tab.
+- **Model (`services/nutrition/model.ts`, `GET /nutrition/plan`):** EMA weight trend (α=0.1/day; handles the user's 0.5 kg scale), adaptive TDEE = mean intake of *complete* days (≥60% of median, today excluded) over 28 days − trend slope × 7700, needing ≥10 complete days and ≥7 weigh-ins; otherwise falls back to the manual goal (`mode: 'goal'`). Target = TDEE + delta toward target weight/date (clamped −750…+600). Training days (linked habit) get +150 kcal, rest days give it back so the weekly total holds. Sleep never enters the formula — only `insights`.
+- **Weekly summary (`services/nutrition/weeklySummary.ts`):** facts computed in code, text written by Claude (template fallback). Cron Sun 15:00 UTC to every nutrition user with a goal; `/week` bot command on demand.
+- **Frontend:** `pages/nutrition/*` (day, add, product form, stats, goal), `components/nutrition/*`, `stores/nutritionStore.ts` (per-date day cache), `utils/nutrition.ts` (goal heat levels, weight forecast via least-squares trend over 28 days, Mifflin–St Jeor goal calculator, 7700 kcal ≈ 1 kg). `Heatmap` has a select mode (`onSelect`) used as the diary calendar. `PortionSheet` resets its inputs whenever the `target` object identity changes — memoize the target. `BottomSheet` portals to `<body>` (a transformed ancestor like an animated card would otherwise break `position: fixed`, and clicks would bubble to the card).
 - **Daily report** includes the developer's previous-day kcal/protein line.
 
 ### API Routes
@@ -175,7 +182,7 @@ All routes require `Authorization: Bearer <jwt>` except `POST /api/auth` and `PO
 - `GET/POST /api/habits/:id/entries` — fetch or upsert entries (POST with `value=0` deletes)
 - `GET/PUT/DELETE /api/habits/:id/reminder` — get / upsert / delete reminder config
 - `GET /api/admin/habits` — all users' habits (adminGuard, see Admin section)
-- `/api/nutrition/*` (nutritionGuard): `foods/search?q=`, `foods/recent`, `foods/mine`, `POST/PATCH/DELETE foods[/:id]` (own only); `GET log?date=`, `POST log` (`foodId` or `name`+macros), `PATCH/DELETE log/:id`, `POST log/copy`; `POST parse` (501 for now); `GET stats?from=&to=`; `GET/PUT goal`; `PUT weight`, `DELETE weight/:date`
+- `/api/nutrition/*` (nutritionGuard): `plan?date=` (model output), `foods/search?q=`, `foods/recent`, `foods/mine`, `POST/PATCH/DELETE foods[/:id]` (own only); `GET log?date=`, `POST log` (`foodId` or `name`+macros), `PATCH/DELETE log/:id`, `POST log/copy`; `POST parse` (501 for now); `GET stats?from=&to=`; `GET/PUT goal`; `PUT weight`, `DELETE weight/:date`
 
 ### Database Schema (SQLite/PostgreSQL via Prisma)
 - `User` — identified by `telegramId` (BigInt)
