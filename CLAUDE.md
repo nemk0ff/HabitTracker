@@ -26,6 +26,7 @@ npm start            # Run compiled dist/index.js
 npm run db:migrate   # prisma migrate dev (creates migration files)
 npm run db:push      # prisma db push (sync schema without migration, use in dev)
 npm run db:generate  # prisma generate (regenerate client after schema change)
+npm run db:seed-foods # idempotent upsert of the base food catalog (prisma/seed/foods.ru.json)
 ```
 
 ### Frontend (`cd frontend`)
@@ -50,7 +51,10 @@ CLAUDE_PROXY="http://127.0.0.1:3128"  # optional: HTTP proxy (alternative to SOC
 KEEP_ALIVE_SECRET="random_secret"     # Bearer token for /api/claude/session-start (shared with keep-alive.mjs)
 CLAUDE_SESSION_STATE_PATH="/tmp/claude-session.json" # where claudeSessions.ts persists session state (defaults to /tmp/claude-session.json)
 CLAUDE_CODE_OAUTH_TOKEN="..."         # long-lived Claude Code OAuth token for keep-alive.mjs on VPS
+NUTRITION_USER_IDS="123,456"          # optional: telegram ids allowed into the nutrition module (defaults to DEVELOPER_CHAT_ID; in dev with neither set, open to all)
 ```
+
+**Running the backend locally without hijacking the prod bot:** grammY long-polling on a token steals updates from the VPS instance. For local UI work start it with a dummy token (`BOT_TOKEN="0:dummy"`; an empty token throws) — polling fails harmlessly. In a plain browser under `vite dev`, the app falls back to `dev-mode` auth (no Telegram initData). Note framer-motion screen transitions freeze if the browser tab is hidden (rAF paused).
 
 Frontend uses `VITE_API_URL` (optional) — defaults to empty string so API calls go to the same origin (works when backend serves the built frontend).
 
@@ -67,7 +71,7 @@ Frontend uses `VITE_API_URL` (optional) — defaults to empty string so API call
 In development (`NODE_ENV !== 'production'`), sending `initData: "dev-mode"` to `/api/auth` bypasses Telegram validation and returns a test user (`telegramId: 999999`). The frontend sends this automatically when `import.meta.env.DEV` is true.
 
 ### Frontend State Management
-Navigation is state-driven via Zustand — there is **no router**. `habitsStore` holds a `screen` field (`'home' | 'habit' | 'create' | 'edit'`) and `selectedHabitId`. `AnimatePresence` in `App.tsx` handles transitions between screens.
+Navigation is state-driven via Zustand — there is **no router**. `stores/navStore.ts` holds `screen` (`Screen` union in `frontend/src/types/index.ts`) plus params (`selectedHabitId`, `foodDate`, `foodMeal`, `foodId`); `navigate(screen, params?)` merges params, so ones not passed keep their values. The app starts on `'hub'` (`HubPage`: habits vs nutrition). Adding a screen means extending `Screen` and the `AnimatePresence` switch in `App.tsx`; `food-*` screens are forced back to `'hub'` there when `user.features.nutrition` is false. New pages use `hooks/useTelegramButtons.ts` (`useBackButton`, `useMainButton`, `haptic`) instead of wiring `window.Telegram.WebApp` by hand. `AnimatePresence` in `App.tsx` handles transitions between screens.
 
 Telegram's native `BackButton` and `MainButton` (from `window.Telegram.WebApp`) are used for navigation and primary actions instead of custom UI buttons. `HapticFeedback` is used for tactile responses on interactions.
 
@@ -105,6 +109,12 @@ Aggregate helpers: `getDau()`, `getWau()`, `getNewUsersCount()`, `getTopEvents()
 `startAlerts()` schedules a `node-cron` job at `'0 9 * * *'` (09:00 UTC). Sends an HTML-formatted daily report to `DEVELOPER_CHAT_ID`. Includes an anomaly alert if 0 new users 2 days in a row.
 
 `sendQuickStats(chatId)` — called by `/stats` bot command (restricted to `DEVELOPER_CHAT_ID`).
+
+### Admin (developer-only)
+"Admin" = the Telegram user whose id equals `DEVELOPER_CHAT_ID`. There is no role column in the DB.
+- **API:** `routes/admin.ts` registers `adminGuard` as an `onRequest` hook for the whole plugin, so every route added there is admin-only. `adminGuard` re-verifies the JWT itself (independent of `authGuard`) and returns 401 (bad/missing token), 403 (not the developer), 503 (`DEVELOPER_CHAT_ID` unset).
+- **Mini App:** `POST /api/auth` returns `user.isAdmin`; `HomePage` shows the "Все привычки" button only when it's true, navigating to the `'admin'` screen (`AdminPage.tsx`, read-only `HabitCard`s grouped by user, data from `GET /api/admin/habits`).
+- **Bot:** developer-only commands `/stats`, `/users`, `/activity`, `/user <id>`, `/claude_session`. The user/activity views are derived from `AnalyticsEvent` via `getUserOverview` / `getRecentActivity` / `getUserDetail` in `analytics.ts` — "last seen" is only as good as the tracked events.
 
 ### Entry Value Semantics
 `HabitEntry.value` encodes intensity: `1`=light, `2`=medium, `3`=hard, `4`=extra. For **binary habits** (`Habit.binary=true`) the UI only records `value=1` (done) or deletes the entry (not done) — no intensity picker shown. Sending `value=0` to `POST /habits/:id/entries` deletes the entry for that date.
@@ -147,6 +157,15 @@ Because the URL never rotates, `cf-tunnel.sh` is now a **one-shot idempotent syn
 
 **Backend runs the compiled build in production:** `pm2 start dist/index.js --name habit-backend --node-args="--env-file=.../backend/.env"` (like the sibling bots), NOT `tsx watch` — the watcher's server child can die while pm2 still shows "online", leaving port 3001 dead.
 
+### Nutrition Module
+Food diary with kcal/macros, goal and weight tracking. MVP is gated to specific users (`utils/features.ts` → `hasNutritionAccess`; `/api/auth` returns `user.features.nutrition`; `nutritionGuard` in `middleware/featureGuard.ts` 403s everyone else). Everyone else sees the hub card as "В разработке".
+
+- **Data:** `Food` is the catalog, macros **per 100 g**: `source` = `seed` (base catalog), `custom` (user's own, `ownerId` set — Пятёрочка/Лавка/restaurant items with `sourceUrl`), `off` (Open Food Facts cache, `externalId`=EAN), `llm` (reserved). `FoodLogEntry` stores a **snapshot** of macros already scaled to `grams`, so editing/deleting a `Food` never rewrites history (`foodId` → SetNull). Diary dates follow the `HabitEntry` convention (client local `YYYY-MM-DD` stored as UTC midnight). `NutritionGoal` is 1:1 with User; `WeightEntry` unique per (user, date).
+- **Search (`services/nutrition/foodSearch.ts`):** SQLite `contains` is case-insensitive only for ASCII, so every `Food` has a `searchName` normalized by `normalizeSearch` (lower-case, ё→е) and queries go through `searchStems` (crude ending-strip so "курица" matches "куриная"). Always write `searchName` when creating/renaming foods. If the local catalog yields < 5 hits, it queries Open Food Facts Search-a-licious (`search.openfoodfacts.org`, 3 s timeout), keeps only hits containing every stem, and upserts them as `source='off'`.
+- **LLM hook (stage 2, not implemented):** `services/nutrition/foodParser.ts` defines `FoodParser`/`ParsedItem`; the exported `foodParser` is a `NotImplementedParser`, so `POST /api/nutrition/parse` returns 501. The Mini App "✨ Текстом" tab already speaks this contract (`ParsedItemsPreview`, demo items). Plugging in a Claude-backed parser = replace the export.
+- **Frontend:** `pages/nutrition/*` (day, add, product form, stats, goal), `components/nutrition/*`, `stores/nutritionStore.ts` (per-date day cache), `utils/nutrition.ts` (goal heat levels, weight forecast via least-squares trend over 28 days, Mifflin–St Jeor goal calculator, 7700 kcal ≈ 1 kg). `Heatmap` has a select mode (`onSelect`) used as the diary calendar. `PortionSheet` resets its inputs whenever the `target` object identity changes — memoize the target.
+- **Daily report** includes the developer's previous-day kcal/protein line.
+
 ### API Routes
 All routes require `Authorization: Bearer <jwt>` except `POST /api/auth` and `POST /api/claude/session-start`.
 - `POST /api/auth` — validate Telegram initData, return JWT
@@ -155,16 +174,21 @@ All routes require `Authorization: Bearer <jwt>` except `POST /api/auth` and `PO
 - `PATCH/DELETE /api/habits/:id` — update / hard-delete (ignores the `archived` flag; DELETE removes the row)
 - `GET/POST /api/habits/:id/entries` — fetch or upsert entries (POST with `value=0` deletes)
 - `GET/PUT/DELETE /api/habits/:id/reminder` — get / upsert / delete reminder config
+- `GET /api/admin/habits` — all users' habits (adminGuard, see Admin section)
+- `/api/nutrition/*` (nutritionGuard): `foods/search?q=`, `foods/recent`, `foods/mine`, `POST/PATCH/DELETE foods[/:id]` (own only); `GET log?date=`, `POST log` (`foodId` or `name`+macros), `PATCH/DELETE log/:id`, `POST log/copy`; `POST parse` (501 for now); `GET stats?from=&to=`; `GET/PUT goal`; `PUT weight`, `DELETE weight/:date`
 
 ### Database Schema (SQLite/PostgreSQL via Prisma)
 - `User` — identified by `telegramId` (BigInt)
 - `Habit` — belongs to User; has `color`, `icon` (emoji), `binary` flag, `archived` flag (schema only — `DELETE /habits/:id` hard-deletes, doesn't soft-archive)
 - `HabitEntry` — one per (habit, date); `value` is 1–4 (intensity levels); unique on `[habitId, date]`
 - `Reminder` — one per Habit (1:1); stores `days` as JSON string, `time` as `HH:MM` UTC, `snooze` bool, `lastMessageId` for deletion
+- `Food` / `FoodLogEntry` / `NutritionGoal` / `WeightEntry` — nutrition module, see above
 - `AnalyticsEvent` — append-only event log; `userId` nullable (SetNull on user delete); `metadata` stored as JSON string; indexed on `[event]`, `[userId]`, `[createdAt]`, `[event, createdAt]`
 
 ### Prisma Client Regeneration (Windows caveat)
 After `db:push` or `db:migrate`, Prisma tries to replace `query_engine-windows.dll.node`. If the backend is running, this rename fails with EPERM (DLL is locked). Fix: stop the server, run `npm run db:generate`, restart. If this is skipped, `prisma.analyticsEvent` will be `undefined` at runtime — `track()` handles this silently, but other new models would cause 500s.
 
 ### Production Deployment
-Build frontend → copy `dist/` to `backend/public/` → backend serves it. The backend is the single deployable unit. See `Dockerfile` and `fly.toml` for production setup.
+Build frontend → copy `dist/` to `backend/public/` → backend serves it. The backend is the single deployable unit. The live deployment is the VPS + pm2 + CloudPub setup described above. `Dockerfile`, `fly.toml` and `.github/workflows/deploy.yml` (Fly.io deploy on push to `main`) are legacy — the working branch is `master`, so that workflow never fires.
+
+`README.md`, `HowItHost.md` and `REMOTE.md` are older Russian-language docs that still describe the tunnelmole/localtunnel era; trust this file and the scripts over them when they disagree.

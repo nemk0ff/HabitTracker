@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useHabitsStore } from '../stores/habitsStore';
+import { useNavStore } from '../stores/navStore';
 import { Heatmap } from '../components/Heatmap';
 import { StatCard } from '../components/StatCard';
 import { NotificationSheet } from '../components/NotificationSheet';
@@ -9,7 +10,8 @@ import { fetchReminder, saveReminder } from '../api/habits';
 import type { Reminder, DayOfWeek } from '../types';
 
 export function HabitDetailPage() {
-  const { habits, selectedHabitId, navigate, toggleEntry, removeHabit } = useHabitsStore();
+  const { habits, toggleEntry, removeHabit } = useHabitsStore();
+  const { selectedHabitId, navigate } = useNavStore();
   const habit = habits.find((h) => h.id === selectedHabitId);
   const [showConfirm, setShowConfirm] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -110,7 +112,7 @@ export function HabitDetailPage() {
             )}
           </button>
           <button
-            onClick={() => navigate('edit', habit.id)}
+            onClick={() => navigate('edit', { selectedHabitId: habit.id })}
             className="w-9 h-9 rounded-xl flex items-center justify-center bg-tg-secondary active:opacity-70 transition-opacity"
           >
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none">

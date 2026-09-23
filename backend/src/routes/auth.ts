@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { validateInitData } from '../utils/telegram.js';
 import { signToken } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
+import { hasNutritionAccess } from '../utils/features.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -66,6 +67,9 @@ export async function authRoutes(app: FastifyInstance) {
         lastName: user.lastName,
         username: user.username,
         isAdmin: DEVELOPER_CHAT_ID !== '' && telegramUser.id.toString() === DEVELOPER_CHAT_ID,
+        features: {
+          nutrition: hasNutritionAccess(telegramUser.id),
+        },
       },
     };
   });

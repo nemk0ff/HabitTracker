@@ -1,31 +1,24 @@
 import { create } from 'zustand';
 import * as habitsApi from '../api/habits';
-import type { Habit, Screen } from '../types';
+import { useNavStore } from './navStore';
+import type { Habit } from '../types';
 
 interface HabitsState {
   habits: Habit[];
   loading: boolean;
   error: string | null;
 
-  screen: Screen;
-  selectedHabitId: number | null;
-
   load: () => Promise<void>;
   addHabit: (data: { name: string; color?: string; icon?: string; binary?: boolean }) => Promise<void>;
   editHabit: (id: number, data: { name?: string; color?: string; icon?: string; binary?: boolean }) => Promise<void>;
   removeHabit: (id: number) => Promise<void>;
   toggleEntry: (habitId: number, date: string, value: number) => Promise<void>;
-
-  navigate: (screen: Screen, habitId?: number | null) => void;
 }
 
 export const useHabitsStore = create<HabitsState>((set, get) => ({
   habits: [],
   loading: false,
   error: null,
-
-  screen: 'home',
-  selectedHabitId: null,
 
   load: async () => {
     set({ loading: true, error: null });
@@ -62,11 +55,8 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
   removeHabit: async (id) => {
     try {
       await habitsApi.deleteHabit(id);
-      set((s) => ({
-        habits: s.habits.filter((h) => h.id !== id),
-        screen: 'home',
-        selectedHabitId: null,
-      }));
+      set((s) => ({ habits: s.habits.filter((h) => h.id !== id) }));
+      useNavStore.getState().navigate('home', { selectedHabitId: null });
     } catch (e: any) {
       set({ error: e.message });
     }
@@ -95,9 +85,5 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
     } catch (e: any) {
       get().load(); // reload on error
     }
-  },
-
-  navigate: (screen, habitId = null) => {
-    set({ screen, selectedHabitId: habitId ?? null });
   },
 }));

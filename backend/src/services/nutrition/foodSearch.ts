@@ -1,0 +1,191 @@
+import type { Food } from '@prisma/client';
+import { prisma } from '../../db.js';
+import { normalizeSearch, searchStems } from './nutritionMath.js';
+
+const OFF_SEARCH_URL = 'https://search.openfoodfacts.org/search';
+const OFF_TIMEOUT_MS = 3000;
+const LOCAL_LIMIT = 30;
+/** Go online to Open Food Facts only when the local catalog has fewer hits than this. */
+const ONLINE_THRESHOLD = 5;
+
+export interface Serving {
+  label: string;
+  grams: number;
+}
+
+export function parseServings(raw: string | null): Serving[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function serializeFood(f: Food) {
+  return {
+    id: f.id,
+    name: f.name,
+    brand: f.brand,
+    source: f.source,
+    sourceUrl: f.sourceUrl,
+    kcal: f.kcal,
+    protein: f.protein,
+    fat: f.fat,
+    carbs: f.carbs,
+    servings: parseServings(f.servings),
+    own: f.ownerId !== null,
+  };
+}
+
+/** Foods visible to a user: shared catalog (ownerId null) + their own. */
+export function visibleTo(userId: number) {
+  return { OR: [{ ownerId: null }, { ownerId: userId }] };
+}
+
+async function searchLocal(userId: number, q: string): Promise<Food[]> {
+  const words = q.split(' ').filter(Boolean);
+  const rows = await prisma.food.findMany({
+    where: {
+      AND: [visibleTo(userId), ...searchStems(q).map((w) => ({ searchName: { contains: w } }))],
+    },
+    take: 200,
+  });
+
+  const score = (f: Food) =>
+    (f.ownerId === userId ? 1000 : 0) +
+    (f.searchName.startsWith(q) ? 300 : f.searchName.startsWith(words[0]) ? 150 : 0) +
+    (f.source === 'seed' ? 50 : 0) +
+    Math.min(f.usageCount, 100) * 5 -
+    f.searchName.length;
+
+  return rows.sort((a, b) => score(b) - score(a)).slice(0, LOCAL_LIMIT);
+}
+
+interface OffHit {
+  code?: string;
+  product_name?: string;
+  product_name_ru?: string;
+  brands?: string[] | string;
+  countries_tags?: string[];
+  nutriments?: Record<string, number>;
+}
+
+function hasMacros(n: Record<string, number> | undefined): n is Record<string, number> {
+  return (
+    !!n &&
+    typeof n['energy-kcal_100g'] === 'number' &&
+    typeof n['proteins_100g'] === 'number' &&
+    typeof n['fat_100g'] === 'number' &&
+    typeof n['carbohydrates_100g'] === 'number'
+  );
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/** Query Open Food Facts (Search-a-licious) and cache usable hits as Food(source='off'). */
+async function searchOpenFoodFacts(q: string): Promise<Food[]> {
+  const stems = searchStems(normalizeSearch(q));
+  const params = new URLSearchParams({
+    q,
+    langs: 'ru',
+    page_size: '25',
+    fields: 'code,product_name,product_name_ru,brands,nutriments,countries_tags',
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OFF_TIMEOUT_MS);
+  let hits: OffHit[] = [];
+  try {
+    const res = await fetch(`${OFF_SEARCH_URL}?${params}`, {
+      headers: { 'User-Agent': 'HabitTracker/1.0 (Telegram Mini App)' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { hits?: OffHit[] };
+    hits = body.hits ?? [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const isRu = (h: OffHit) => Number(h.countries_tags?.includes('en:russia') ?? false);
+  // OFF matches loosely on multi-word queries; keep only hits containing every stem.
+  const matches = (h: OffHit) => {
+    const brand = Array.isArray(h.brands) ? h.brands.join(' ') : h.brands ?? '';
+    const text = normalizeSearch(`${h.product_name_ru ?? ''} ${h.product_name ?? ''} ${brand}`);
+    return stems.every((w) => text.includes(w));
+  };
+  const usable = hits
+    .filter((h) => h.code && (h.product_name_ru || h.product_name) && hasMacros(h.nutriments) && matches(h))
+    .sort((a, b) => isRu(b) - isRu(a))
+    .slice(0, 10);
+
+  const saved: Food[] = [];
+  for (const h of usable) {
+    const n = h.nutriments!;
+    const name = decodeEntities((h.product_name_ru || h.product_name)!).trim().slice(0, 120);
+    const brandRaw = Array.isArray(h.brands) ? h.brands[0] : h.brands?.split(',')[0];
+    const brand = brandRaw ? decodeEntities(brandRaw).trim() || null : null;
+    const data = {
+      name,
+      searchName: normalizeSearch(`${name} ${brand ?? ''}`),
+      brand,
+      kcal: Math.round(n['energy-kcal_100g']),
+      protein: Math.round(n['proteins_100g'] * 10) / 10,
+      fat: Math.round(n['fat_100g'] * 10) / 10,
+      carbs: Math.round(n['carbohydrates_100g'] * 10) / 10,
+      sourceUrl: `https://world.openfoodfacts.org/product/${h.code}`,
+    };
+    try {
+      saved.push(
+        await prisma.food.upsert({
+          where: { source_externalId: { source: 'off', externalId: h.code! } },
+          update: data,
+          create: { ...data, source: 'off', externalId: h.code! },
+        }),
+      );
+    } catch {
+      // a single bad row shouldn't break search
+    }
+  }
+  return saved;
+}
+
+export async function searchFoods(userId: number, rawQuery: string) {
+  const q = normalizeSearch(rawQuery);
+  if (q.length < 2) return [];
+
+  const local = await searchLocal(userId, q);
+  if (local.length >= ONLINE_THRESHOLD) return local.map(serializeFood);
+
+  const online = await searchOpenFoodFacts(rawQuery.trim());
+  const seen = new Set(local.map((f) => f.id));
+  return [...local, ...online.filter((f) => !seen.has(f.id))].map(serializeFood);
+}
+
+/** Recently eaten foods of a user (most recent first), for the empty search state. */
+export async function recentFoods(userId: number) {
+  const recent = await prisma.foodLogEntry.findMany({
+    where: { userId, foodId: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    select: { foodId: true },
+    take: 100,
+  });
+  const ids = [...new Set(recent.map((r) => r.foodId!))].slice(0, 20);
+  const foods = await prisma.food.findMany({ where: { id: { in: ids } } });
+  const byId = new Map(foods.map((f) => [f.id, f]));
+  return ids
+    .map((id) => byId.get(id))
+    .filter((f): f is Food => !!f)
+    .map(serializeFood);
+}

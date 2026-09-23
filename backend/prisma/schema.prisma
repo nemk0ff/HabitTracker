@@ -8,14 +8,18 @@ datasource db {
 }
 
 model User {
-  id         Int              @id @default(autoincrement())
-  telegramId BigInt           @unique
-  firstName  String?
-  lastName   String?
-  username   String?
-  createdAt  DateTime         @default(now())
-  habits     Habit[]
-  events     AnalyticsEvent[]
+  id            Int              @id @default(autoincrement())
+  telegramId    BigInt           @unique
+  firstName     String?
+  lastName      String?
+  username      String?
+  createdAt     DateTime         @default(now())
+  habits        Habit[]
+  events        AnalyticsEvent[]
+  foods         Food[]
+  foodLog       FoodLogEntry[]
+  weights       WeightEntry[]
+  nutritionGoal NutritionGoal?
 }
 
 model AnalyticsEvent {
@@ -74,4 +78,78 @@ model HabitEntry {
 
   @@unique([habitId, date])
   @@index([habitId, date])
+}
+
+// ─── Nutrition module ─────────────────────────────────────────────────────────
+
+/// Food catalog: seed base + user's own products + cached Open Food Facts / LLM results.
+/// Nutrients are per 100 g.
+model Food {
+  id         Int            @id @default(autoincrement())
+  ownerId    Int?
+  owner      User?          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name       String
+  searchName String
+  brand      String?
+  source     String
+  sourceUrl  String?
+  externalId String?
+  kcal       Float
+  protein    Float
+  fat        Float
+  carbs      Float
+  servings   String?
+  usageCount Int            @default(0)
+  createdAt  DateTime       @default(now())
+  logEntries FoodLogEntry[]
+
+  @@unique([source, externalId])
+  @@index([searchName])
+  @@index([ownerId])
+}
+
+/// One eaten item. Nutrients are a snapshot already scaled to `grams`.
+model FoodLogEntry {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime
+  meal      String
+  foodId    Int?
+  food      Food?    @relation(fields: [foodId], references: [id], onDelete: SetNull)
+  name      String
+  grams     Float
+  kcal      Float
+  protein   Float
+  fat       Float
+  carbs     Float
+  source    String   @default("manual")
+  createdAt DateTime @default(now())
+
+  @@index([userId, date])
+}
+
+model NutritionGoal {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kcal           Int
+  protein        Int?
+  fat            Int?
+  carbs          Int?
+  startWeightKg  Float?
+  targetWeightKg Float?
+  targetDate     DateTime?
+  updatedAt      DateTime  @updatedAt
+}
+
+model WeightEntry {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime
+  weightKg  Float
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date])
 }

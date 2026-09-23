@@ -39,6 +39,24 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** "🥗 Питание: 2840 / 3000 ккал · Б 150 г" for the developer's own diary day, or null if nothing logged. */
+async function developerNutritionLine(day: Date): Promise<string | null> {
+  const dev = await prisma.user.findUnique({ where: { telegramId: BigInt(DEVELOPER_CHAT_ID) } });
+  if (!dev) return null;
+  const [sum, goal] = await Promise.all([
+    prisma.foodLogEntry.aggregate({
+      where: { userId: dev.id, date: day },
+      _sum: { kcal: true, protein: true },
+      _count: true,
+    }),
+    prisma.nutritionGoal.findUnique({ where: { userId: dev.id } }),
+  ]);
+  if (sum._count === 0) return null;
+  const kcal = Math.round(sum._sum.kcal ?? 0);
+  const protein = Math.round(sum._sum.protein ?? 0);
+  return `🥗 Питание: <b>${kcal}</b>${goal ? ` / ${goal.kcal}` : ''} ккал · Б ${protein}${goal?.protein ? ` / ${goal.protein}` : ''} г`;
+}
+
 export async function sendDailyReport(): Promise<void> {
   if (!DEVELOPER_CHAT_ID) return;
 
@@ -48,7 +66,7 @@ export async function sendDailyReport(): Promise<void> {
     to: new Date(dayBounds(0).from),
   };
 
-  const [newUsers, totalUsers, dau, wau, topEvents, habitsCreated, entriesLogged] =
+  const [newUsers, totalUsers, dau, wau, topEvents, habitsCreated, entriesLogged, nutritionLine] =
     await Promise.all([
       getNewUsersCount(yesterday.from, yesterday.to),
       prisma.user.count(),
@@ -57,6 +75,8 @@ export async function sendDailyReport(): Promise<void> {
       getTopEvents(yesterday.from, yesterday.to),
       prisma.habit.count({ where: { createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
       prisma.habitEntry.count({ where: { createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
+      // Diary days are stored as UTC midnight of the local date, so this is "yesterday" in Moscow too.
+      developerNutritionLine(yesterday.from).catch(() => null),
     ]);
 
   const date = yesterday.from.toISOString().split('T')[0];
@@ -75,6 +95,7 @@ export async function sendDailyReport(): Promise<void> {
     ``,
     `✅ Привычек создано: <b>${habitsCreated}</b>`,
     `📝 Отметок сделано: <b>${entriesLogged}</b>`,
+    ...(nutritionLine ? [nutritionLine] : []),
     ``,
     `🖱 Топ действий:`,
     eventsText,

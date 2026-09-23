@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useHabitsStore } from '../stores/habitsStore';
+import { useNavStore } from '../stores/navStore';
 import { HabitCard } from '../components/HabitCard';
 import { fetchAllHabits } from '../api/admin';
 import type { AdminUserGroup } from '../types';
@@ -23,7 +23,7 @@ function userTitle(u: AdminUserGroup['user']): string {
 }
 
 export function AdminPage() {
-  const { navigate } = useHabitsStore();
+  const navigate = useNavStore((s) => s.navigate);
   const [groups, setGroups] = useState<AdminUserGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 

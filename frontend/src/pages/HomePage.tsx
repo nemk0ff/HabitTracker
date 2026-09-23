@@ -1,17 +1,21 @@
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useHabitsStore } from '../stores/habitsStore';
+import { useNavStore } from '../stores/navStore';
 import { useAuthStore } from '../stores/authStore';
 import { HabitCard } from '../components/HabitCard';
 
 export function HomePage() {
-  const { habits, loading, navigate } = useHabitsStore();
+  const { habits, loading } = useHabitsStore();
+  const navigate = useNavStore((s) => s.navigate);
   const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
     const webapp = window.Telegram?.WebApp;
     if (webapp) {
-      webapp.BackButton?.hide?.();
+      webapp.BackButton?.show?.();
+      const backHandler = () => navigate('hub');
+      webapp.BackButton?.onClick?.(backHandler);
 
       webapp.MainButton?.setParams?.({
         text: 'Добавить привычку',
@@ -21,6 +25,7 @@ export function HomePage() {
       webapp.MainButton?.onClick?.(handler);
 
       return () => {
+        webapp.BackButton?.offClick?.(backHandler);
         webapp.MainButton?.offClick?.(handler);
         webapp.MainButton?.hide?.();
       };

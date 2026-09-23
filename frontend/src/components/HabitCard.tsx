@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { MiniHeatmap } from './MiniHeatmap';
 import { calculateStreak, toDateString } from '../utils/dates';
 import { useHabitsStore } from '../stores/habitsStore';
+import { useNavStore } from '../stores/navStore';
 import type { Habit } from '../types';
 
 interface Props {
@@ -11,7 +12,8 @@ interface Props {
 }
 
 export function HabitCard({ habit, readOnly = false }: Props) {
-  const { navigate, toggleEntry } = useHabitsStore();
+  const toggleEntry = useHabitsStore((s) => s.toggleEntry);
+  const navigate = useNavStore((s) => s.navigate);
   const { current } = calculateStreak(habit.entries);
   const todayStr = toDateString(new Date());
   const todayEntry = habit.entries.find((e) => e.date === todayStr);
@@ -52,7 +54,7 @@ export function HabitCard({ habit, readOnly = false }: Props) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
       whileTap={readOnly ? undefined : { scale: 0.98 }}
-      onClick={readOnly ? undefined : () => navigate('habit', habit.id)}
+      onClick={readOnly ? undefined : () => navigate('habit', { selectedHabitId: habit.id })}
       className={`bg-tg-section rounded-2xl p-4 transition-opacity ${
         readOnly ? '' : 'cursor-pointer active:opacity-80'
       }`}

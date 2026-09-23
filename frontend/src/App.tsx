@@ -2,15 +2,23 @@ import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from './stores/authStore';
 import { useHabitsStore } from './stores/habitsStore';
+import { useNavStore } from './stores/navStore';
+import { HubPage } from './pages/HubPage';
 import { HomePage } from './pages/HomePage';
 import { HabitDetailPage } from './pages/HabitDetailPage';
 import { HabitFormPage } from './pages/HabitFormPage';
 import { AdminPage } from './pages/AdminPage';
+import { FoodDayPage } from './pages/nutrition/FoodDayPage';
+import { FoodAddPage } from './pages/nutrition/FoodAddPage';
+import { FoodProductFormPage } from './pages/nutrition/FoodProductFormPage';
+import { FoodStatsPage } from './pages/nutrition/FoodStatsPage';
+import { FoodGoalPage } from './pages/nutrition/FoodGoalPage';
 import { LoadingScreen } from './components/LoadingScreen';
 
 export default function App() {
   const { user, loading: authLoading, error: authError, authenticate } = useAuthStore();
-  const { screen, load } = useHabitsStore();
+  const load = useHabitsStore((s) => s.load);
+  const navScreen = useNavStore((s) => s.screen);
 
   useEffect(() => {
     // Гарантированный выход из загрузки через 8 сек
@@ -28,6 +36,11 @@ export default function App() {
       const initData = webapp.initData;
       if (initData) {
         authenticate(initData);
+        return;
+      }
+      // Plain browser in dev: telegram-web-app.js is loaded but there's no initData.
+      if (import.meta.env.DEV) {
+        authenticate('dev-mode');
         return;
       }
       const t = setTimeout(() => {
@@ -87,12 +100,21 @@ export default function App() {
     );
   }
 
+  // Nutrition screens are gated by the feature flag from /api/auth.
+  const screen = navScreen.startsWith('food-') && !user?.features?.nutrition ? 'hub' : navScreen;
+
   return (
     <AnimatePresence mode="wait">
+      {screen === 'hub' && <HubPage key="hub" />}
       {screen === 'home' && <HomePage key="home" />}
       {screen === 'admin' && <AdminPage key="admin" />}
       {screen === 'habit' && <HabitDetailPage key="habit" />}
       {(screen === 'create' || screen === 'edit') && <HabitFormPage key="form" />}
+      {screen === 'food-day' && <FoodDayPage key="food-day" />}
+      {screen === 'food-add' && <FoodAddPage key="food-add" />}
+      {screen === 'food-product' && <FoodProductFormPage key="food-product" />}
+      {screen === 'food-stats' && <FoodStatsPage key="food-stats" />}
+      {screen === 'food-goal' && <FoodGoalPage key="food-goal" />}
     </AnimatePresence>
   );
 }

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useHabitsStore } from '../stores/habitsStore';
+import { useNavStore } from '../stores/navStore';
 import { ColorPicker } from '../components/ColorPicker';
 import { EmojiPicker } from '../components/EmojiPicker';
 import { HABIT_COLORS } from '../utils/colors';
 
 export function HabitFormPage() {
-  const { habits, screen, selectedHabitId, navigate, addHabit, editHabit } = useHabitsStore();
+  const { habits, addHabit, editHabit } = useHabitsStore();
+  const { screen, selectedHabitId, navigate } = useNavStore();
   const isEdit = screen === 'edit';
   const existing = isEdit ? habits.find((h) => h.id === selectedHabitId) : null;
 
@@ -21,7 +23,7 @@ export function HabitFormPage() {
     if (!webapp) return;
 
     webapp.BackButton?.show?.();
-    const backHandler = () => navigate(isEdit ? 'habit' : 'home', selectedHabitId);
+    const backHandler = () => navigate(isEdit ? 'habit' : 'home');
     webapp.BackButton?.onClick?.(backHandler);
 
     webapp.MainButton?.setParams?.({
@@ -37,7 +39,7 @@ export function HabitFormPage() {
       try {
         if (isEdit && selectedHabitId) {
           await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary });
-          navigate('habit', selectedHabitId);
+          navigate('habit');
         } else {
           await addHabit({ name: name.trim(), color, icon: icon || undefined, binary });
           navigate('home');
@@ -63,7 +65,7 @@ export function HabitFormPage() {
     try {
       if (isEdit && selectedHabitId) {
         await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary });
-        navigate('habit', selectedHabitId);
+        navigate('habit');
       } else {
         await addHabit({ name: name.trim(), color, icon: icon || undefined, binary });
         navigate('home');

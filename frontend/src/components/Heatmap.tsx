@@ -14,13 +14,17 @@ interface Props {
   entries: HabitEntry[];
   color: string;
   binary?: boolean;
-  onToggle: (date: string, value: number) => void;
+  onToggle?: (date: string, value: number) => void;
+  /** Select mode: a tap reports the day instead of cycling its intensity. */
+  onSelect?: (date: string) => void;
+  selectedDate?: string;
 }
 
-export function Heatmap({ entries, color, binary = false, onToggle }: Props) {
+export function Heatmap({ entries, color, binary = false, onToggle, onSelect, selectedDate }: Props) {
   const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
+  const initial = selectedDate ? new Date(selectedDate + 'T00:00:00') : today;
+  const [year, setYear] = useState(initial.getFullYear());
+  const [month, setMonth] = useState(initial.getMonth());
   const [direction, setDirection] = useState(0);
 
   const entryMap = new Map(entries.map((e) => [e.date, e.value]));
@@ -52,9 +56,14 @@ export function Heatmap({ entries, color, binary = false, onToggle }: Props) {
   }, [month]);
 
   const handleCellTap = (dateStr: string) => {
+    if (onSelect) {
+      onSelect(dateStr);
+      window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+      return;
+    }
     const current = entryMap.get(dateStr) ?? 0;
     const next = binary ? (current > 0 ? 0 : 1) : (current >= 3 ? 0 : current + 1);
-    onToggle(dateStr, next);
+    onToggle?.(dateStr, next);
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
   };
 
@@ -129,6 +138,12 @@ export function Heatmap({ entries, color, binary = false, onToggle }: Props) {
                     className="aspect-square rounded-lg flex items-center justify-center text-[11px] font-medium transition-colors disabled:opacity-30 relative"
                     style={{ backgroundColor: bg }}
                   >
+                    {selectedDate === dateStr && (
+                      <div
+                        className="absolute -inset-[3px] rounded-[10px] pointer-events-none"
+                        style={{ boxShadow: `0 0 0 2px ${color}` }}
+                      />
+                    )}
                     {isTodayCell && (
                       <div
                         className="absolute inset-0 rounded-lg pointer-events-none"
