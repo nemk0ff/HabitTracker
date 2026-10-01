@@ -12,7 +12,7 @@ interface Props {
 }
 
 const POLL_MS = 3000;
-const MAX_WAIT_MS = 6 * 60_000;
+const MAX_WAIT_MS = 12 * 60_000; // server-side agent timeout is 10 min
 
 /**
  * "Добавить текстом" via the developer's Hermes agent: the server runs it as a
@@ -103,7 +103,7 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
 
       {running && (
         <p className="text-xs text-tg-hint text-center mt-3">
-          Обычно до пары минут. Экран можно закрыть — еда запишется сама
+          Обычно 2–5 минут. Экран можно закрыть — еда запишется сама
         </p>
       )}
 

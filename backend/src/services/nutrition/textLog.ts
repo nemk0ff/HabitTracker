@@ -19,6 +19,15 @@ export const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 export type Meal = (typeof MEALS)[number];
 
 const MEAL_LABEL: Record<Meal, string> = { breakfast: 'завтрак', lunch: 'обед', dinner: 'ужин', snack: 'перекус' };
+
+/** The agent sometimes answers "обед" instead of "lunch" — accept both. */
+function toMeal(v: unknown): Meal | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if ((MEALS as readonly string[]).includes(s)) return s as Meal;
+  const ru = (Object.entries(MEAL_LABEL) as [Meal, string][]).find(([, label]) => s.startsWith(label.slice(0, 4)));
+  return ru ? ru[0] : null;
+}
 const JOB_TTL_MS = 24 * 3_600_000;
 
 // ─── Agent contract ───────────────────────────────────────────────────────────
@@ -48,9 +57,11 @@ const SYSTEM_PROMPT = `Ты помогаешь вести дневник пит�
 2. Если продукт есть в списке «Мои продукты» (совпадают название и магазин) — укажи его id в own_food_id и возьми КБЖУ оттуда.
 3. Иначе найди КБЖУ на 100 г: для товаров магазинов и блюд ресторанов — поиском в интернете по названию и месту (сайт магазина или ресторана, меню, calorizator, fatsecret); для домашней или простой еды — по типичным значениям. Если нашёл страницу товара — дай ссылку в source_url.
 
+Работай быстро: продукты из «Моих продуктов» не ищи в интернете, на остальные — не больше 1–2 поисков на позицию; если точных данных нет, бери типичные значения для такого блюда.
+
 Составное блюдо, где пользователь перечислил ингредиенты с весами, разбивай на ингредиенты; блюдо без весов ингредиентов — одной позицией. Не выдумывай продукты, которых нет в тексте.
 
-meal — приём пищи, если он назван в тексте ("на завтрак", "на ужин"), иначе null. day_offset — 0, или -1 если пользователь пишет про вчера.
+meal — приём пищи, если он назван в тексте: строго одно из "breakfast", "lunch", "dinner", "snack" (завтрак, обед, ужин, перекус), иначе null. day_offset — 0, или -1 если пользователь пишет про вчера.
 
 Ответь ТОЛЬКО JSON-объектом, без пояснений:
 {"items":[{"name":"Удон с курицей терияки","store":"Яндекс Лавка","grams":400,"own_food_id":null,"kcal_per_100g":153,"protein_per_100g":7.8,"fat_per_100g":5.3,"carbs_per_100g":18.8,"source_url":null}],"meal":null,"day_offset":0}
@@ -209,7 +220,7 @@ async function run(job: Job, text: string, opts: { date?: string; meal?: Meal })
   const today = mskNow().toISOString().slice(0, 10);
   const dayOffset = Math.max(-7, Math.min(0, Math.round(num(reply.day_offset) ?? 0)));
   const date = opts.date ?? shiftDay(today, dayOffset);
-  const meal: Meal = MEALS.includes(reply.meal as Meal) ? (reply.meal as Meal) : opts.meal ?? mealByTimeMsk();
+  const meal: Meal = toMeal(reply.meal) ?? opts.meal ?? mealByTimeMsk();
   const dateObj = new Date(date + 'T00:00:00.000Z');
   const ownById = new Map(ownFoods.map((f) => [f.id, f]));
 

@@ -131,7 +131,7 @@ bot.on('message', async (ctx) => {
   // Developer's plain text = "что я съел" → Hermes agent → diary.
   const { hasAgentLogAccess } = await import('../utils/features.js');
   if (text && !text.startsWith('/') && userId !== null && ctx.from && hasAgentLogAccess(ctx.from.id)) {
-    const status = await ctx.reply('⏳ Передал агенту — это может занять пару минут…');
+    const status = await ctx.reply('⏳ Передал агенту — обычно это 2–5 минут…');
     // Not awaited: the agent can take minutes and grammY handles updates sequentially,
     // so waiting here would stall every other user's updates.
     void logFoodFromChat(ctx.chat.id, status.message_id, userId, text);
