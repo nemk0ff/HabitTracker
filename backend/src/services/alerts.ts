@@ -89,7 +89,8 @@ export async function sendDailyReport(): Promise<void> {
     `📊 <b>Отчёт за ${date}</b>`,
     ``,
     `👥 Всего пользователей: <b>${totalUsers}</b>`,
-    `🆕 Новых вчера: <b>${newUsers}</b>`,
+    // Only mention new users when there were any.
+    ...(newUsers > 0 ? [`🆕 Новых вчера: <b>${newUsers}</b>`] : []),
     `🔥 DAU: <b>${dau}</b>`,
     `📅 WAU: <b>${wau}</b>`,
     ``,
@@ -102,19 +103,6 @@ export async function sendDailyReport(): Promise<void> {
   ].join('\n');
 
   await bot.api.sendMessage(DEVELOPER_CHAT_ID, report, { parse_mode: 'HTML' });
-
-  // Алерт: 0 новых пользователей 2 дня подряд
-  if (newUsers === 0) {
-    const dayBefore = dayBounds(2);
-    const prevNewUsers = await getNewUsersCount(dayBefore.from, dayBefore.to);
-    if (prevNewUsers === 0) {
-      await bot.api.sendMessage(
-        DEVELOPER_CHAT_ID,
-        '⚠️ <b>Алерт</b>: 0 новых пользователей 2 дня подряд.',
-        { parse_mode: 'HTML' },
-      );
-    }
-  }
 }
 
 export async function sendQuickStats(chatId: string): Promise<void> {

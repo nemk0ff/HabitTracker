@@ -107,7 +107,7 @@ Events tracked automatically:
 Aggregate helpers: `getDau()`, `getWau()`, `getNewUsersCount()`, `getTopEvents()` — use Prisma `findMany + distinct` and `groupBy` for SQLite/PostgreSQL compatibility (no raw SQL).
 
 ### Alerts (`src/services/alerts.ts`)
-`startAlerts()` schedules a `node-cron` job at `'0 9 * * *'` (09:00 UTC). Sends an HTML-formatted daily report to `DEVELOPER_CHAT_ID`. Includes an anomaly alert if 0 new users 2 days in a row.
+`startAlerts()` schedules a `node-cron` job at `'0 9 * * *'` (09:00 UTC). Sends an HTML-formatted daily report to `DEVELOPER_CHAT_ID`. The "new users" line appears only when there were new users (the old "0 new users 2 days in a row" alert was removed on request).
 
 `sendQuickStats(chatId)` — called by `/stats` bot command (restricted to `DEVELOPER_CHAT_ID`).
 
