@@ -25,6 +25,8 @@ export interface User {
   isAdmin: boolean;
   features: {
     nutrition: boolean;
+    /** "Добавить текстом" through the developer's Hermes agent. */
+    agentLog: boolean;
   };
 }
 
@@ -162,12 +164,4 @@ export interface Plan {
   sleepLastNightH: number | null;
   sleepAvg7H: number | null;
   insights: Insight[];
-}
-
-/** Result of free-text parsing (LLM, stage 2). Macros are for `grams`. */
-export interface ParsedItem extends Macros {
-  name: string;
-  grams: number;
-  foodId: number | null;
-  estimated: boolean;
 }

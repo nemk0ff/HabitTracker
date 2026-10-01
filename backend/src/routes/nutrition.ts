@@ -5,7 +5,8 @@ import { nutritionGuard } from '../middleware/featureGuard.js';
 import { track } from '../services/analytics.js';
 import { searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
 import { normalizeSearch, round1, scaleMacros, sumMacros } from '../services/nutrition/nutritionMath.js';
-import { foodParser, FoodParseError } from '../services/nutrition/foodParser.js';
+import { getJob, jobView, startTextLog, undoJob, MEALS as AGENT_MEALS, type Meal as AgentMeal } from '../services/nutrition/textLog.js';
+import { hasAgentLogAccess } from '../utils/features.js';
 import { computePlan, weightTrend } from '../services/nutrition/model.js';
 
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
@@ -350,25 +351,36 @@ export async function nutritionRoutes(app: FastifyInstance) {
     },
   );
 
-  // ─── Text parsing (LLM, stage 2) ────────────────────────────────────────────
+  // ─── Text logging via the developer's Hermes agent ─────────────────────────
+  // Agent calls take minutes, so POST starts a background job and the client polls GET.
 
-  app.post<{ Body: { text?: string } }>('/nutrition/parse', async (request, reply) => {
-    const userId = (request as any).user.userId;
+  app.post<{ Body: { text?: string; date?: string; meal?: string } }>('/nutrition/text-log', async (request, reply) => {
+    const { userId, telegramId } = (request as any).user;
+    if (!hasAgentLogAccess(telegramId)) return reply.status(403).send({ error: 'Доступно только владельцу агента' });
     const text = request.body?.text?.trim();
     if (!text) return reply.status(400).send({ error: 'text is required' });
     if (text.length > 2000) return reply.status(400).send({ error: 'Слишком длинный текст' });
-    if (!foodParser.available) {
-      return reply.status(501).send({ error: 'Разбор текста через ИИ не настроен (нет ANTHROPIC_API_KEY)' });
+    const date = request.body?.date !== undefined ? parseDay(request.body.date) : undefined;
+    if (date === null) return reply.status(400).send({ error: 'date must be YYYY-MM-DD' });
+    const meal = request.body?.meal;
+    if (meal !== undefined && !(AGENT_MEALS as readonly string[]).includes(meal)) {
+      return reply.status(400).send({ error: 'invalid meal' });
     }
-    try {
-      const items = await foodParser.parse(text, userId);
-      track({ userId, event: 'food_parsed', category: 'miniapp', metadata: { items: items.length } });
-      return { items };
-    } catch (e) {
-      if (e instanceof FoodParseError) return reply.status(422).send({ error: e.message });
-      request.log.error(e, 'food parse failed');
-      return reply.status(502).send({ error: 'Claude сейчас недоступен, попробуй ещё раз' });
-    }
+    const job = startTextLog(userId, text, { date: date ? dayString(date) : undefined, meal: meal as AgentMeal | undefined });
+    return reply.status(202).send(jobView(job));
+  });
+
+  app.get<{ Params: { id: string } }>('/nutrition/text-log/:id', async (request, reply) => {
+    const { userId } = (request as any).user;
+    const job = getJob(userId, request.params.id);
+    if (!job) return reply.status(404).send({ error: 'Задача не найдена (сервер мог перезапуститься)' });
+    return jobView(job);
+  });
+
+  app.post<{ Params: { id: string } }>('/nutrition/text-log/:id/undo', async (request, reply) => {
+    const { userId } = (request as any).user;
+    if (!(await undoJob(userId, request.params.id))) return reply.status(409).send({ error: 'Нечего отменять' });
+    return { success: true };
   });
 
   // ─── Stats, goal, weight ────────────────────────────────────────────────────

@@ -104,17 +104,58 @@ bot.command('week', async (ctx) => {
   await ctx.reply(await weeklySummaryText(userId));
 });
 
+/** "↩️ Отменить" under a text-log result: removes the entries (and products) it created. */
+bot.callbackQuery(/^tlu:(.+)$/, async (ctx) => {
+  const userId = await resolveUserId(ctx.from.id);
+  const { undoJob } = await import('./nutrition/textLog.js');
+  const ok = userId !== null && (await undoJob(userId, ctx.match[1]!));
+  await ctx.answerCallbackQuery(ok ? 'Отменено' : 'Нечего отменять');
+  if (ok) {
+    const text = ctx.callbackQuery.message && 'text' in ctx.callbackQuery.message ? ctx.callbackQuery.message.text : '';
+    await ctx.editMessageText(`${text}
+
+↩️ Отменено — записи удалены`).catch(() => {});
+  }
+});
+
 bot.on('message', async (ctx) => {
   const userId = await resolveUserId(ctx.from?.id);
+  const text = ctx.message.text;
   track({
     userId,
     event: 'message_received',
     category: 'bot',
-    label: (ctx.message as any)?.text?.slice(0, 80) ?? undefined,
+    label: text?.slice(0, 80) ?? undefined,
   });
+
+  // Developer's plain text = "что я съел" → Hermes agent → diary.
+  const { hasAgentLogAccess } = await import('../utils/features.js');
+  if (text && !text.startsWith('/') && userId !== null && ctx.from && hasAgentLogAccess(ctx.from.id)) {
+    const status = await ctx.reply('⏳ Передал агенту — это может занять пару минут…');
+    // Not awaited: the agent can take minutes and grammY handles updates sequentially,
+    // so waiting here would stall every other user's updates.
+    void logFoodFromChat(ctx.chat.id, status.message_id, userId, text);
+    return;
+  }
 
   await ctx.reply('Открой трекер, чтобы управлять привычками 👇', openTrackerOptions());
 });
+
+async function logFoodFromChat(chatId: number, messageId: number, userId: number, text: string) {
+  try {
+    const { startTextLog, waitForJob, formatResult } = await import('./nutrition/textLog.js');
+    const job = await waitForJob(startTextLog(userId, text));
+    if (job.status === 'done' && job.result) {
+      await bot.api.editMessageText(chatId, messageId, formatResult(job.result), {
+        reply_markup: { inline_keyboard: [[{ text: '↩️ Отменить', callback_data: `tlu:${job.id}` }]] },
+      });
+    } else {
+      await bot.api.editMessageText(chatId, messageId, `❌ ${job.error ?? 'Не получилось записать'}`);
+    }
+  } catch (e) {
+    console.error('[bot] food log failed:', e);
+  }
+}
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
 

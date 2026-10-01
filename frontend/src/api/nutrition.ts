@@ -6,7 +6,6 @@ import type {
   Meal,
   NutritionGoal,
   NutritionStats,
-  ParsedItem,
   Plan,
   Serving,
   WeightPoint,
@@ -91,9 +90,45 @@ export function copyDay(fromDate: string, toDate: string, meal?: Meal): Promise<
   return api<FoodLogEntry[]>(`${BASE}/log/copy`, json('POST', { fromDate, toDate, meal }));
 }
 
-/** LLM text parsing — the backend answers 501 until stage 2 ships. */
-export function parseText(text: string): Promise<{ items: ParsedItem[] }> {
-  return api<{ items: ParsedItem[] }>(`${BASE}/parse`, json('POST', { text }));
+// ─── "Добавить текстом" via the Hermes agent (developer only) ─────────────────
+
+export interface TextLogItem {
+  entryId: number;
+  foodId: number;
+  name: string;
+  brand: string | null;
+  grams: number;
+  kcal: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  status: 'existing' | 'new';
+}
+
+export interface TextLogJob {
+  id: string;
+  status: 'running' | 'done' | 'error' | 'undone';
+  result: {
+    date: string;
+    meal: Meal;
+    items: TextLogItem[];
+    totals: { kcal: number; protein: number; fat: number; carbs: number };
+    skipped: string[];
+  } | null;
+  error: string | null;
+}
+
+/** Starts a background agent job; poll it with getTextLog. */
+export function startTextLog(text: string, date: string, meal: Meal): Promise<TextLogJob> {
+  return api<TextLogJob>(`${BASE}/text-log`, json('POST', { text, date, meal }));
+}
+
+export function getTextLog(id: string): Promise<TextLogJob> {
+  return api<TextLogJob>(`${BASE}/text-log/${id}`);
+}
+
+export function undoTextLog(id: string): Promise<void> {
+  return api<void>(`${BASE}/text-log/${id}/undo`, { method: 'POST' });
 }
 
 // ─── Stats, goal, weight ──────────────────────────────────────────────────────

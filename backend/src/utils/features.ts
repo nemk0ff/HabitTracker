@@ -18,3 +18,13 @@ export function hasNutritionAccess(telegramId: number | bigint | string): boolea
   if (IS_DEV && String(telegramId) === '999999' && !process.env.NUTRITION_USER_IDS) return true;
   return allow.has(String(telegramId));
 }
+
+/**
+ * "Добавить текстом" through the developer's own Hermes agent — developer only
+ * (it runs on their laptop with their model). Dev mode lets the test user in.
+ */
+export function hasAgentLogAccess(telegramId: number | bigint | string): boolean {
+  const dev = process.env.DEVELOPER_CHAT_ID || '';
+  if (IS_DEV && !dev && String(telegramId) === '999999') return true;
+  return dev !== '' && String(telegramId) === dev;
+}
