@@ -54,6 +54,14 @@ export function deleteFood(id: number): Promise<void> {
   return api<void>(`${BASE}/foods/${id}`, { method: 'DELETE' });
 }
 
+export function fetchFavorites(): Promise<Food[]> {
+  return api<Food[]>(`${BASE}/favorites`);
+}
+
+export function setFavorite(foodId: number, favorite: boolean): Promise<void> {
+  return api<void>(`${BASE}/favorites/${foodId}`, { method: favorite ? 'PUT' : 'DELETE' });
+}
+
 // ─── Diary ────────────────────────────────────────────────────────────────────
 
 export function fetchDay(date: string): Promise<FoodDay> {

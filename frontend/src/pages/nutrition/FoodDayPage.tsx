@@ -139,10 +139,13 @@ export function FoodDayPage() {
 
         {/* Shortcuts */}
         <div className="flex gap-2 mt-3">
-          <button onClick={() => navigate('food-stats')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-sm font-medium text-tg-text active:opacity-70">
+          <button onClick={() => navigate('food-suggest')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-xs font-medium text-tg-text active:opacity-70">
+            🍽 Что доесть
+          </button>
+          <button onClick={() => navigate('food-stats')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-xs font-medium text-tg-text active:opacity-70">
             📊 Статистика
           </button>
-          <button onClick={() => navigate('food-goal')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-sm font-medium text-tg-text active:opacity-70">
+          <button onClick={() => navigate('food-goal')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-xs font-medium text-tg-text active:opacity-70">
             🎯 Цель и вес
           </button>
         </div>

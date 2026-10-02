@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BottomSheet } from './BottomSheet';
 import { MEALS, NUTRITION_COLOR, MACRO_COLORS, fmt, scaleMacros } from '../../utils/nutrition';
 import { haptic } from '../../hooks/useTelegramButtons';
+import { FavoriteStar } from './FavoriteStar';
 import type { Macros, Meal, Serving } from '../../types';
 
 export interface PortionTarget {
@@ -21,11 +22,14 @@ interface Props {
   onConfirm: (grams: number, meal: Meal) => void | Promise<void>;
   /** Shown in edit mode. */
   onDelete?: () => void;
+  /** Star in the header when provided. Kept outside `target` so toggling doesn't reset the inputs. */
+  favorite?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 const QUICK_GRAMS = [50, 100, 150, 200, 300];
 
-export function PortionSheet({ target, confirmLabel, onClose, onConfirm, onDelete }: Props) {
+export function PortionSheet({ target, confirmLabel, onClose, onConfirm, onDelete, favorite, onToggleFavorite }: Props) {
   const [gramsText, setGramsText] = useState('100');
   const [meal, setMeal] = useState<Meal>('breakfast');
   const [busy, setBusy] = useState(false);
@@ -62,7 +66,10 @@ export function PortionSheet({ target, confirmLabel, onClose, onConfirm, onDelet
     <BottomSheet open={!!target} onClose={onClose}>
       {target && (
         <>
-          <h2 className="text-lg font-bold text-tg-text leading-tight">{target.title}</h2>
+          <div className="flex items-start gap-2">
+            <h2 className="flex-1 text-lg font-bold text-tg-text leading-tight">{target.title}</h2>
+            {onToggleFavorite && <FavoriteStar active={!!favorite} onToggle={onToggleFavorite} className="-mt-1 -mr-2" />}
+          </div>
           {target.subtitle && <p className="text-xs text-tg-hint mt-0.5">{target.subtitle}</p>}
           <p className="text-xs text-tg-hint mt-1">
             На 100 г: {fmt(target.per100.kcal)} ккал · Б {fmt(target.per100.protein, 1)} · Ж {fmt(target.per100.fat, 1)} · У{' '}

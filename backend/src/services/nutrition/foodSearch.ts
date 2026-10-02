@@ -23,7 +23,13 @@ export function parseServings(raw: string | null): Serving[] {
   }
 }
 
-export function serializeFood(f: Food) {
+/** Ids of the user's starred foods. */
+export async function favoriteIds(userId: number): Promise<Set<number>> {
+  const rows = await prisma.favoriteFood.findMany({ where: { userId }, select: { foodId: true } });
+  return new Set(rows.map((r) => r.foodId));
+}
+
+export function serializeFood(f: Food, favIds?: Set<number>) {
   return {
     id: f.id,
     name: f.name,
@@ -36,6 +42,7 @@ export function serializeFood(f: Food) {
     carbs: f.carbs,
     servings: parseServings(f.servings),
     own: f.ownerId !== null,
+    favorite: favIds?.has(f.id) ?? false,
   };
 }
 
@@ -184,12 +191,12 @@ export async function searchFoods(userId: number, rawQuery: string) {
   const q = normalizeSearch(rawQuery);
   if (q.length < 2) return [];
 
-  const local = await searchLocal(userId, q);
-  if (local.length >= ONLINE_THRESHOLD) return local.map(serializeFood);
+  const [local, favs] = await Promise.all([searchLocal(userId, q), favoriteIds(userId)]);
+  if (local.length >= ONLINE_THRESHOLD) return local.map((f) => serializeFood(f, favs));
 
   const online = await searchOpenFoodFacts(rawQuery.trim());
   const seen = new Set(local.map((f) => f.id));
-  return [...local, ...online.filter((f) => !seen.has(f.id))].map(serializeFood);
+  return [...local, ...online.filter((f) => !seen.has(f.id))].map((f) => serializeFood(f, favs));
 }
 
 /** Recently eaten foods of a user (most recent first), for the empty search state. */
@@ -201,10 +208,10 @@ export async function recentFoods(userId: number) {
     take: 100,
   });
   const ids = [...new Set(recent.map((r) => r.foodId!))].slice(0, 20);
-  const foods = await prisma.food.findMany({ where: { id: { in: ids } } });
+  const [foods, favs] = await Promise.all([prisma.food.findMany({ where: { id: { in: ids } } }), favoriteIds(userId)]);
   const byId = new Map(foods.map((f) => [f.id, f]));
   return ids
     .map((id) => byId.get(id))
     .filter((f): f is Food => !!f)
-    .map(serializeFood);
+    .map((f) => serializeFood(f, favs));
 }

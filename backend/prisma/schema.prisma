@@ -20,6 +20,7 @@ model User {
   foodLog       FoodLogEntry[]
   weights       WeightEntry[]
   nutritionGoal NutritionGoal?
+  favorites     FavoriteFood[]
 }
 
 model AnalyticsEvent {
@@ -87,23 +88,24 @@ model HabitEntry {
 /// Food catalog: seed base + user's own products + cached Open Food Facts / LLM results.
 /// Nutrients are per 100 g.
 model Food {
-  id         Int            @id @default(autoincrement())
-  ownerId    Int?
-  owner      User?          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  name       String
-  searchName String
-  brand      String?
-  source     String
-  sourceUrl  String?
-  externalId String?
-  kcal       Float
-  protein    Float
-  fat        Float
-  carbs      Float
-  servings   String?
-  usageCount Int            @default(0)
-  createdAt  DateTime       @default(now())
-  logEntries FoodLogEntry[]
+  id          Int            @id @default(autoincrement())
+  ownerId     Int?
+  owner       User?          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  searchName  String
+  brand       String?
+  source      String
+  sourceUrl   String?
+  externalId  String?
+  kcal        Float
+  protein     Float
+  fat         Float
+  carbs       Float
+  servings    String?
+  usageCount  Int            @default(0)
+  createdAt   DateTime       @default(now())
+  logEntries  FoodLogEntry[]
+  favoritedBy FavoriteFood[]
 
   @@unique([source, externalId])
   @@index([searchName])
@@ -157,4 +159,15 @@ model WeightEntry {
   createdAt DateTime @default(now())
 
   @@unique([userId, date])
+}
+
+/// Foods a user starred — any visible food (own, imported, seed, OFF cache).
+model FavoriteFood {
+  userId    Int
+  foodId    Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  food      Food     @relation(fields: [foodId], references: [id], onDelete: Cascade)
+
+  @@id([userId, foodId])
 }

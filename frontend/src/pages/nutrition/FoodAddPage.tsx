@@ -4,6 +4,7 @@ import { useNavStore } from '../../stores/navStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
 import { PortionSheet, type PortionTarget } from '../../components/nutrition/PortionSheet';
 import { AgentLogPanel } from '../../components/nutrition/AgentLogPanel';
+import { FavoriteStar } from '../../components/nutrition/FavoriteStar';
 import { useAuthStore } from '../../stores/authStore';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { fetchMyFoods, searchFoods } from '../../api/nutrition';
@@ -14,7 +15,15 @@ type Tab = 'search' | 'text';
 
 export function FoodAddPage() {
   const { foodDate: date, foodMeal, navigate } = useNavStore();
-  const { recent, loadRecent, addEntry } = useNutritionStore();
+  const { recent, loadRecent, addEntry, toggleFavorite } = useNutritionStore();
+  // Star state for foods shown here (search results / mine aren't in the store).
+  const [favOverride, setFavOverride] = useState<Record<number, boolean>>({});
+  const isFav = (f: Food) => favOverride[f.id] ?? f.favorite;
+  const star = async (f: Food) => {
+    setFavOverride((o) => ({ ...o, [f.id]: !isFav(f) }));
+    const fav = await toggleFavorite({ ...f, favorite: isFav(f) });
+    setFavOverride((o) => ({ ...o, [f.id]: fav }));
+  };
   const agentLog = useAuthStore((s) => !!s.user?.features?.agentLog);
 
   const [tab, setTab] = useState<Tab>('search');
@@ -127,7 +136,7 @@ export function FoodAddPage() {
 
             <div className="flex flex-col gap-1.5">
               {list.map((f) => (
-                <FoodRow key={f.id} food={f} onClick={() => setPicked(f)} />
+                <FoodRow key={f.id} food={f} favorite={isFav(f)} onStar={() => star(f)} onClick={() => setPicked(f)} />
               ))}
             </div>
 
@@ -148,7 +157,14 @@ export function FoodAddPage() {
                 <div className="text-xs text-tg-hint mt-5 mb-2 px-1">Мои продукты</div>
                 <div className="flex flex-col gap-1.5">
                   {mine.map((f) => (
-                    <FoodRow key={f.id} food={f} onClick={() => setPicked(f)} onEdit={() => navigate('food-product', { foodId: f.id })} />
+                    <FoodRow
+                      key={f.id}
+                      food={f}
+                      favorite={isFav(f)}
+                      onStar={() => star(f)}
+                      onClick={() => setPicked(f)}
+                      onEdit={() => navigate('food-product', { foodId: f.id })}
+                    />
                   ))}
                 </div>
               </>
@@ -162,6 +178,8 @@ export function FoodAddPage() {
       <PortionSheet
         target={target}
         confirmLabel="Добавить"
+        favorite={picked ? isFav(picked) : false}
+        onToggleFavorite={picked ? () => star(picked) : undefined}
         onClose={() => setPicked(null)}
         onConfirm={async (grams, meal) => {
           if (!picked) return;
@@ -176,7 +194,19 @@ export function FoodAddPage() {
   );
 }
 
-function FoodRow({ food, onClick, onEdit }: { food: Food; onClick: () => void; onEdit?: () => void }) {
+function FoodRow({
+  food,
+  favorite,
+  onStar,
+  onClick,
+  onEdit,
+}: {
+  food: Food;
+  favorite: boolean;
+  onStar: () => void;
+  onClick: () => void;
+  onEdit?: () => void;
+}) {
   return (
     <div className="flex items-center bg-tg-section rounded-xl">
       <button onClick={onClick} className="flex-1 min-w-0 px-4 py-2.5 text-left active:opacity-70">
@@ -198,6 +228,7 @@ function FoodRow({ food, onClick, onEdit }: { food: Food; onClick: () => void; o
           {fmt(food.kcal)} ккал · Б {fmt(food.protein, 1)} · Ж {fmt(food.fat, 1)} · У {fmt(food.carbs, 1)} на 100 г
         </div>
       </button>
+      <FavoriteStar active={favorite} onToggle={onStar} />
       {onEdit && (
         <button onClick={onEdit} className="px-3 py-2 text-tg-hint active:opacity-60" aria-label="Изменить">
           ✏️

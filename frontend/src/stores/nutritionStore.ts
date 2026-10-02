@@ -12,6 +12,7 @@ interface NutritionState {
   goal: NutritionGoal | null;
   goalLoaded: boolean;
   recent: Food[];
+  favorites: Food[];
   error: string | null;
 
   loadDay: (date: string) => Promise<void>;
@@ -19,6 +20,9 @@ interface NutritionState {
   saveWeight: (date: string, weightKg: number) => Promise<void>;
   loadGoal: () => Promise<void>;
   loadRecent: () => Promise<void>;
+  loadFavorites: () => Promise<void>;
+  /** Optimistic star toggle; returns the new state (reverted on error). */
+  toggleFavorite: (food: Food) => Promise<boolean>;
   addEntry: (input: LogInput) => Promise<FoodLogEntry | null>;
   addEntries: (inputs: LogInput[]) => Promise<void>;
   updateEntry: (entry: FoodLogEntry, data: { grams?: number; meal?: Meal }) => Promise<void>;
@@ -47,6 +51,7 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
     goal: null,
     goalLoaded: false,
     recent: [],
+    favorites: [],
     error: null,
 
     loadDay: async (date) => {
@@ -87,6 +92,36 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
         set({ recent: await api.fetchRecentFoods() });
       } catch {
         // empty state just shows no recents
+      }
+    },
+
+    loadFavorites: async () => {
+      try {
+        set({ favorites: await api.fetchFavorites() });
+      } catch (e: any) {
+        set({ error: e.message });
+      }
+    },
+
+    toggleFavorite: async (food) => {
+      const next = !food.favorite;
+      const apply = (fav: boolean) =>
+        set((s) => ({
+          recent: s.recent.map((f) => (f.id === food.id ? { ...f, favorite: fav } : f)),
+          favorites: fav
+            ? s.favorites.some((f) => f.id === food.id)
+              ? s.favorites
+              : [...s.favorites, { ...food, favorite: true }]
+            : s.favorites.filter((f) => f.id !== food.id),
+        }));
+      apply(next);
+      try {
+        await api.setFavorite(food.id, next);
+        return next;
+      } catch (e: any) {
+        apply(!next);
+        set({ error: e.message });
+        return !next;
       }
     },
 

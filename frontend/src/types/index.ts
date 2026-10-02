@@ -64,7 +64,8 @@ export type Screen =
   | 'food-add'
   | 'food-product'
   | 'food-stats'
-  | 'food-goal';
+  | 'food-goal'
+  | 'food-suggest';
 
 // ─── Nutrition ────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,8 @@ export interface Food extends Macros {
   sourceUrl: string | null;
   servings: Serving[];
   own: boolean;
+  /** Starred by the user (shown on "Что доесть"). */
+  favorite: boolean;
 }
 
 /** Diary entry; macros are for the eaten `grams`. */

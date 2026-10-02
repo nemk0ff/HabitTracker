@@ -3,7 +3,7 @@ import type { FoodLogEntry, NutritionGoal } from '@prisma/client';
 import { prisma } from '../db.js';
 import { nutritionGuard } from '../middleware/featureGuard.js';
 import { track } from '../services/analytics.js';
-import { searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
+import { favoriteIds, searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
 import { normalizeSearch, round1, scaleMacros, sumMacros } from '../services/nutrition/nutritionMath.js';
 import { getJob, jobView, startTextLog, undoJob, MEALS as AGENT_MEALS, type Meal as AgentMeal } from '../services/nutrition/textLog.js';
 import { hasAgentLogAccess } from '../utils/features.js';
@@ -114,8 +114,11 @@ export async function nutritionRoutes(app: FastifyInstance) {
 
   app.get('/nutrition/foods/mine', async (request) => {
     const userId = (request as any).user.userId;
-    const foods = await prisma.food.findMany({ where: { ownerId: userId }, orderBy: { name: 'asc' } });
-    return foods.map(serializeFood);
+    const [foods, favs] = await Promise.all([
+      prisma.food.findMany({ where: { ownerId: userId }, orderBy: { name: 'asc' } }),
+      favoriteIds(userId),
+    ]);
+    return foods.map((f) => serializeFood(f, favs));
   });
 
   app.post<{ Body: FoodBody }>('/nutrition/foods', async (request, reply) => {
@@ -142,7 +145,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
       },
     });
     track({ userId, event: 'food_custom_created', category: 'miniapp', label: name });
-    return serializeFood(food);
+    return serializeFood(food, await favoriteIds(userId));
   });
 
   app.patch<{ Params: { id: string }; Body: FoodBody }>('/nutrition/foods/:id', async (request, reply) => {
@@ -173,7 +176,40 @@ export async function nutritionRoutes(app: FastifyInstance) {
         }),
       },
     });
-    return serializeFood(food);
+    return serializeFood(food, await favoriteIds(userId));
+  });
+
+  // ─── Favorites ("Что доесть") ──────────────────────────────────────────────
+
+  app.get('/nutrition/favorites', async (request) => {
+    const userId = (request as any).user.userId;
+    const rows = await prisma.favoriteFood.findMany({
+      where: { userId },
+      include: { food: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const favs = new Set(rows.map((r) => r.foodId));
+    return rows.map((r) => serializeFood(r.food, favs));
+  });
+
+  app.put<{ Params: { foodId: string } }>('/nutrition/favorites/:foodId', async (request, reply) => {
+    const userId = (request as any).user.userId;
+    const foodId = Number(request.params.foodId);
+    const food = await prisma.food.findFirst({ where: { id: foodId, ...visibleTo(userId) } });
+    if (!food) return reply.status(404).send({ error: 'Food not found' });
+    await prisma.favoriteFood.upsert({
+      where: { userId_foodId: { userId, foodId } },
+      update: {},
+      create: { userId, foodId },
+    });
+    track({ userId, event: 'food_favorited', category: 'miniapp', label: food.name });
+    return { success: true };
+  });
+
+  app.delete<{ Params: { foodId: string } }>('/nutrition/favorites/:foodId', async (request) => {
+    const userId = (request as any).user.userId;
+    await prisma.favoriteFood.deleteMany({ where: { userId, foodId: Number(request.params.foodId) } });
+    return { success: true };
   });
 
   app.delete<{ Params: { id: string } }>('/nutrition/foods/:id', async (request, reply) => {
