@@ -79,3 +79,8 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* Toast action chip: tint of the toast's own text colour, works on both light and dark toasts */
+.toast-chip {
+  background-color: color-mix(in srgb, currentColor 16%, transparent);
+}

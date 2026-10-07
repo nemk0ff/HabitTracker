@@ -12,6 +12,8 @@ export interface Habit {
   binary: boolean;
   /** null = intensity levels; 'hours' = entry value is minutes. */
   measure: 'hours' | null;
+  /** null = every day; 1–6 = N times a week. */
+  weeklyTarget: number | null;
   createdAt: string;
   entries: HabitEntry[];
 }

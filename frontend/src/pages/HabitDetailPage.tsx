@@ -8,18 +8,22 @@ import { NotificationSheet } from '../components/NotificationSheet';
 import { calculateStreak, getMonthCompletionRate } from '../utils/dates';
 import { fetchReminder, saveReminder } from '../api/habits';
 import { HoursSheet } from '../components/HoursSheet';
-import { averageHours, formatHours, isHoursHabit, levelEntries } from '../utils/habits';
+import { averageHours, formatHours, isHoursHabit, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
 import { toDateString } from '../utils/dates';
+import { HabitDaySheet } from '../components/HabitDaySheet';
+import { SleepChart } from '../components/SleepChart';
+import { setHabitValue } from '../utils/habitActions';
 import type { Reminder, DayOfWeek } from '../types';
 
 export function HabitDetailPage() {
-  const { habits, toggleEntry, removeHabit } = useHabitsStore();
+  const { habits, removeHabit } = useHabitsStore();
   const { selectedHabitId, navigate } = useNavStore();
   const habit = habits.find((h) => h.id === selectedHabitId);
   const [showConfirm, setShowConfirm] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [reminder, setReminder] = useState<Reminder | null>(null);
   const [hoursDate, setHoursDate] = useState<string | null>(null);
+  const [dayDate, setDayDate] = useState<string | null>(null);
 
   const loadReminder = useCallback(async () => {
     if (!selectedHabitId) return;
@@ -64,11 +68,31 @@ export function HabitDetailPage() {
   const completionRate = getMonthCompletionRate(habit.entries, now.getFullYear(), now.getMonth());
 
   const hours = isHoursHabit(habit);
+  const today = toDateString(now);
   const avg7 = hours ? averageHours(habit.entries, toDateString(new Date(Date.now() - 6 * 86_400_000))) : null;
+  const week = weekProgress(habit, today);
 
-  const handleToggle = (date: string, value: number) => {
-    toggleEntry(habit.id, date, value);
-  };
+  // Calendar edits go through the same path as the Today screen: undo toast, no silent rewrites.
+  const saveDay = (date: string, value: number) => setHabitValue(habit, date, value, { askIntensity: false });
+
+  // Weekly-goal habits are judged by weeks, daily ones by days in a row.
+  const stats: { label: string; value: string | number }[] = hours
+    ? [
+        { label: 'Дней подряд', value: current },
+        { label: 'Рекорд, дней', value: best },
+        { label: 'Среднее за 7 дн', value: avg7 !== null ? formatHours(avg7) : '—' },
+      ]
+    : habit.weeklyTarget
+      ? [
+          { label: 'Эта неделя', value: `${week.done} из ${week.target}` },
+          { label: 'Недель подряд', value: weeklyStreak(habit, today) },
+          { label: 'За месяц', value: `${completionRate}%` },
+        ]
+      : [
+          { label: 'Дней подряд', value: current },
+          { label: 'Рекорд, дней', value: best },
+          { label: 'За месяц', value: `${completionRate}%` },
+        ];
 
   const handleDelete = async () => {
     await removeHabit(habit.id);
@@ -131,21 +155,23 @@ export function HabitDetailPage() {
 
         {/* Stats */}
         <div className="flex gap-2 mb-5">
-          <StatCard label="Текущий" value={current} color={habit.color} />
-          <StatCard label="Лучший" value={best} color={habit.color} />
-          {hours ? (
-            <StatCard label="Среднее 7 дн" value={avg7 !== null ? formatHours(avg7) : '—'} color={habit.color} />
-          ) : (
-            <StatCard label="За месяц" value={`${completionRate}%`} color={habit.color} />
-          )}
+          {stats.map((s) => (
+            <StatCard key={s.label} label={s.label} value={s.value} color={habit.color} />
+          ))}
         </div>
 
-        {/* Heatmap */}
+        {hours && (
+          <div className="bg-tg-section rounded-2xl p-4 mb-5">
+            <SleepChart entries={habit.entries} color={habit.color} today={today} onSelect={setHoursDate} />
+          </div>
+        )}
+
+        {/* Heatmap: a tap opens the day sheet (explicit choice) instead of cycling the value */}
         <div className="bg-tg-section rounded-2xl p-4 mb-5">
           {hours ? (
             <Heatmap entries={levelEntries(habit)} color={habit.color} onSelect={setHoursDate} />
           ) : (
-            <Heatmap entries={habit.entries} color={habit.color} binary={habit.binary} onToggle={handleToggle} />
+            <Heatmap entries={habit.entries} color={habit.color} binary={habit.binary} onSelect={setDayDate} />
           )}
         </div>
 
@@ -233,9 +259,10 @@ export function HabitDetailPage() {
           minutes={habit.entries.find((e) => e.date === hoursDate)?.value ?? 0}
           color={habit.color}
           onClose={() => setHoursDate(null)}
-          onSave={(m) => hoursDate && toggleEntry(habit.id, hoursDate, m)}
+          onSave={(m) => hoursDate && saveDay(hoursDate, m)}
         />
       )}
+      {!hours && <HabitDaySheet habit={habit} date={dayDate} onClose={() => setDayDate(null)} onSave={(v) => dayDate && saveDay(dayDate, v)} />}
 
       <NotificationSheet
         open={notifOpen}

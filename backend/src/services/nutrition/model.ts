@@ -212,10 +212,12 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
   // ─── Insights: progress ────────────────────────────────────────────────────
   if (mode === 'goal' && goal) {
     const need = [
-      complete.length < MIN_COMPLETE_DAYS && `${MIN_COMPLETE_DAYS - complete.length} полных дней дневника`,
-      weighInsInWindow < MIN_WEIGH_INS && `${MIN_WEIGH_INS - weighInsInWindow} взвешиваний`,
+      complete.length < MIN_COMPLETE_DAYS &&
+        plural(MIN_COMPLETE_DAYS - complete.length, 'полный день', 'полных дня', 'полных дней') + ' дневника',
+      weighInsInWindow < MIN_WEIGH_INS &&
+        plural(MIN_WEIGH_INS - weighInsInWindow, 'взвешивание', 'взвешивания', 'взвешиваний'),
     ].filter(Boolean);
-    if (need.length) insights.push({ level: 'info', text: `Адаптивный расчёт включится, когда наберётся ещё ${need.join(' и ')}` });
+    if (need.length) insights.push({ level: 'info', text: `Ещё ${need.join(' и ')} — и норма начнёт подстраиваться под тебя` });
   }
   if (trendKgPerWeek !== null && goal?.targetWeightKg != null && trendNow !== null) {
     const gaining = goal.targetWeightKg > trendNow;
@@ -283,4 +285,12 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
     insights,
     trend,
   };
+}
+
+/** "1 полный день", "2 полных дня", "5 полных дней". */
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const form = m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+  return `${n} ${form}`;
 }

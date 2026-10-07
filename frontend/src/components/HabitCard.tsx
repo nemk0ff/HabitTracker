@@ -4,7 +4,7 @@ import { MiniHeatmap } from './MiniHeatmap';
 import { calculateStreak, toDateString } from '../utils/dates';
 import { useNavStore } from '../stores/navStore';
 import { HoursSheet } from './HoursSheet';
-import { formatHours, isHoursHabit, levelEntries } from '../utils/habits';
+import { formatHours, isHoursHabit, levelEntries, weekProgress } from '../utils/habits';
 import { ChevronRight } from 'lucide-react';
 import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
 import type { Habit } from '../types';
@@ -127,8 +127,12 @@ export function HabitCard({ habit, readOnly = false }: Props) {
             {habit.name}
           </span>
 
-          {/* Streak */}
-          {current > 0 ? (
+          {/* Weekly goal → this week's progress; daily habit → streak */}
+          {habit.weeklyTarget ? (
+            <div className="text-xs font-medium" style={{ color: habit.color }}>
+              {weekProgress(habit, toDateString(new Date())).done} из {habit.weeklyTarget} за неделю
+            </div>
+          ) : current > 0 ? (
             <div className="flex items-center gap-0.5 text-xs font-medium" style={{ color: habit.color }}>
               <svg width="11" height="11" viewBox="0 0 14 14" fill="currentColor">
                 <path d="M7 0.5C7 0.5 8.5 3 8.5 5C8.5 5.8 8.2 6.5 7.7 7C8.8 6.2 10 5 10 3.5C10 3.5 13 6 13 9.5C13 11.7 11.2 13.5 9 13.5C8.1 13.5 7.3 13.2 6.7 12.7C6.9 12.3 7 11.9 7 11.5C7 10.1 5.9 9 4.5 9C3.8 9 3.2 9.3 2.7 9.7C2 9.7 1 9 1 9.5C1 11.7 2.8 13.5 5 13.5C3.6 13.5 2.5 12.4 2.5 11C2.5 9.6 3.6 8.5 5 8.5C5 8.5 4 7.5 4 6C4 4 7 0.5 7 0.5Z" />

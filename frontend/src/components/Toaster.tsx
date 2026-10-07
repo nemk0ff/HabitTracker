@@ -32,25 +32,36 @@ export function Toaster() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
             transition={{ duration: 0.18 }}
-            className="pointer-events-auto max-w-md w-full rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg"
+            className={`pointer-events-auto max-w-md w-full rounded-2xl px-4 py-3 flex gap-3 shadow-lg ${
+              toast.actions.length > 1 ? 'flex-col' : 'items-center'
+            }`}
             style={{
               backgroundColor: toast.tone === 'error' ? 'var(--over)' : 'var(--tg-theme-text-color)',
               color: 'var(--tg-theme-bg-color)',
             }}
           >
             <span className="flex-1 text-sm leading-snug">{toast.text}</span>
-            {toast.actions.map((a) => (
-              <button
-                key={a.label}
-                onClick={() => {
-                  a.onClick();
-                  hide();
-                }}
-                className="shrink-0 text-sm font-semibold min-h-[32px] px-1"
-              >
-                {a.label}
-              </button>
-            ))}
+            {/* Several actions (e.g. intensity choice + undo) get their own row */}
+            <div className={toast.actions.length > 1 ? 'flex gap-2 -mx-1' : 'contents'}>
+              {toast.actions.map((a, i) => (
+                <button
+                  key={a.label}
+                  onClick={() => {
+                    a.onClick();
+                    hide();
+                  }}
+                  className={`shrink-0 text-sm font-semibold min-h-[36px] px-1 ${
+                    toast.actions.length > 1 && i < toast.actions.length - 1
+                      ? 'flex-1 rounded-lg toast-chip'
+                      : toast.actions.length > 1
+                        ? 'ml-auto px-2'
+                        : ''
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

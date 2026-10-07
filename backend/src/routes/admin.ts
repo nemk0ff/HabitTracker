@@ -58,6 +58,7 @@ export async function adminRoutes(app: FastifyInstance) {
             icon: h.icon,
             binary: h.binary,
             measure: h.measure,
+            weeklyTarget: h.weeklyTarget,
             createdAt: h.createdAt.toISOString(),
             entries: h.entries.map((e) => ({
               id: e.id,

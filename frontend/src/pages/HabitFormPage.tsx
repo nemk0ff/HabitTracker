@@ -18,6 +18,7 @@ export function HabitFormPage() {
   const [binary, setBinary] = useState(existing?.binary ?? false);
   // Hours habits store minutes; the kind is chosen on creation only (entries aren't converted).
   const [hours, setHours] = useState(existing?.measure === 'hours');
+  const [weeklyTarget, setWeeklyTarget] = useState<number | null>(existing?.weeklyTarget ?? null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -40,10 +41,10 @@ export function HabitFormPage() {
 
       try {
         if (isEdit && selectedHabitId) {
-          await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary });
+          await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary, weeklyTarget: hours ? null : weeklyTarget });
           navigate('habit');
         } else {
-          await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null });
+          await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null, weeklyTarget: hours ? null : weeklyTarget });
           navigate('home');
         }
         webapp.HapticFeedback?.notificationOccurred('success');
@@ -59,17 +60,17 @@ export function HabitFormPage() {
       webapp.MainButton?.offClick?.(mainHandler);
       webapp.MainButton?.hide?.();
     };
-  }, [name, color, icon, binary, hours, isEdit, selectedHabitId, saving, navigate, addHabit, editHabit]);
+  }, [name, color, icon, binary, hours, weeklyTarget, isEdit, selectedHabitId, saving, navigate, addHabit, editHabit]);
 
   const handleSubmit = async () => {
     if (!name.trim() || saving) return;
     setSaving(true);
     try {
       if (isEdit && selectedHabitId) {
-        await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary });
+        await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary, weeklyTarget: hours ? null : weeklyTarget });
         navigate('habit');
       } else {
-        await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null });
+        await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null, weeklyTarget: hours ? null : weeklyTarget });
         navigate('home');
       }
     } finally {
@@ -92,7 +93,7 @@ export function HabitFormPage() {
 
         {/* Name */}
         <div className="mb-6">
-          <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-2">
+          <label className="block text-sm font-semibold text-tg-text mb-2">
             Название
           </label>
           <input
@@ -108,7 +109,7 @@ export function HabitFormPage() {
 
         {/* Color */}
         <div className="mb-6">
-          <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
+          <label className="block text-sm font-semibold text-tg-text mb-2">
             Цвет
           </label>
           <div className="bg-tg-section rounded-2xl p-4">
@@ -118,7 +119,7 @@ export function HabitFormPage() {
 
         {/* Icon */}
         <div className="mb-6">
-          <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
+          <label className="block text-sm font-semibold text-tg-text mb-2">
             Иконка
           </label>
           <div className="bg-tg-section rounded-2xl p-4">
@@ -129,7 +130,7 @@ export function HabitFormPage() {
         {/* Kind: hours (create only) */}
         {!isEdit ? (
           <div className="mb-6">
-            <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
+            <label className="block text-sm font-semibold text-tg-text mb-2">
               Что отмечаем
             </label>
             <div className="flex bg-tg-section rounded-xl p-1">
@@ -158,7 +159,7 @@ export function HabitFormPage() {
         {/* Binary mode */}
         {!hours && (
         <div className="mb-6">
-          <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
+          <label className="block text-sm font-semibold text-tg-text mb-2">
             Режим
           </label>
           <div className="bg-tg-section rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
@@ -181,9 +182,58 @@ export function HabitFormPage() {
         </div>
         )}
 
+        {/* Frequency goal: daily or N times a week (drives the weekly progress instead of a daily streak) */}
+        {!hours && (
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-tg-text mb-2">
+              Как часто
+            </label>
+            <div className="bg-tg-section rounded-2xl p-3">
+              <div className="flex gap-1.5" role="radiogroup" aria-label="Сколько раз в неделю">
+                {[1, 2, 3, 4, 5, 6].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    role="radio"
+                    aria-checked={weeklyTarget === n}
+                    onClick={() => setWeeklyTarget(n)}
+                    className="flex-1 min-h-[44px] rounded-xl text-base font-semibold transition-colors"
+                    style={
+                      weeklyTarget === n
+                        ? { backgroundColor: color, color: '#fff' }
+                        : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
+                    }
+                  >
+                    {n}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={weeklyTarget === null}
+                  onClick={() => setWeeklyTarget(null)}
+                  className="flex-[2] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
+                  style={
+                    weeklyTarget === null
+                      ? { backgroundColor: color, color: '#fff' }
+                      : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
+                  }
+                >
+                  Каждый день
+                </button>
+              </div>
+              <p className="text-sm text-tg-hint mt-2 px-1">
+                {weeklyTarget === null
+                  ? 'Серия считается по дням подряд'
+                  : `${weeklyTarget} ${weeklyTarget === 1 ? 'раз' : weeklyTarget < 5 ? 'раза' : 'раз'} в неделю — прогресс и серия считаются по неделям`}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Preview */}
         <div className="mb-6">
-          <label className="block text-xs font-medium text-tg-section-header uppercase tracking-wider mb-3">
+          <label className="block text-sm font-semibold text-tg-text mb-2">
             Превью
           </label>
           <div className="bg-tg-section rounded-2xl p-4 flex items-center gap-3">

@@ -11,6 +11,7 @@ export function createHabit(data: {
   icon?: string;
   binary?: boolean;
   measure?: 'hours' | null;
+  weeklyTarget?: number | null;
 }): Promise<Habit> {
   return api<Habit>('/api/habits', {
     method: 'POST',
@@ -20,7 +21,7 @@ export function createHabit(data: {
 
 export function updateHabit(
   id: number,
-  data: { name?: string; color?: string; icon?: string; binary?: boolean },
+  data: { name?: string; color?: string; icon?: string; binary?: boolean; weeklyTarget?: number | null },
 ): Promise<Habit> {
   return api<Habit>(`/api/habits/${id}`, {
     method: 'PATCH',

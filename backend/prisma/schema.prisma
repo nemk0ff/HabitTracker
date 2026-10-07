@@ -53,6 +53,8 @@ model Habit {
   binary    Boolean      @default(false)
   /// null = intensity levels 1-4 (or done/not done when binary); "hours" = entry value is minutes
   measure   String?
+  /// null = every day; 1-6 = N times a week (frequency goal, drives weekly progress)
+  weeklyTarget Int?
   entries   HabitEntry[]
   reminder  Reminder?
 

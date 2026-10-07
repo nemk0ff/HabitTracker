@@ -34,8 +34,14 @@ export function HomePage() {
 
   if (loading) {
     return (
-      <div className="scrollable flex items-center justify-center">
-        <div className="text-tg-hint">Загрузка...</div>
+      // Skeleton in the shape of the habit cards, so the screen doesn't jump when data arrives
+      <div className="scrollable" aria-busy="true" aria-label="Загрузка привычек">
+        <div className="p-4 flex flex-col gap-3">
+          <div className="h-7 w-40 rounded-lg bg-tg-section mb-1" />
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-[104px] rounded-2xl bg-tg-section animate-pulse" />
+          ))}
+        </div>
       </div>
     );
   }

@@ -1,4 +1,4 @@
-import { NUTRITION_COLOR, TRACK_COLOR, fmt } from '../../utils/nutrition';
+import { TRACK_COLOR, fmt } from '../../utils/nutrition';
 
 interface Props {
   eaten: number;
@@ -15,7 +15,7 @@ export function CalorieRing({ eaten, goal, size = 150, stroke = 12, compact = fa
   const c = 2 * Math.PI * r;
   const ratio = goal ? eaten / goal : 0;
   const shown = Math.min(ratio, 1);
-  const color = ratio > 1.1 ? '#E0602A' : NUTRITION_COLOR;
+  const color = ratio > 1.1 ? 'var(--over)' : 'var(--accent)';
   const left = goal ? goal - eaten : null;
 
   return (
@@ -36,17 +36,24 @@ export function CalorieRing({ eaten, goal, size = 150, stroke = 12, compact = fa
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <div className={`${compact ? 'text-sm' : 'text-3xl'} font-bold text-tg-text leading-none`}>{fmt(eaten)}</div>
-        {!compact && (
+        {compact || left === null ? (
+          <div className={`${compact ? 'text-sm font-bold' : 'font-display text-2xl'} text-tg-text leading-none`}>{fmt(eaten)}</div>
+        ) : (
+          // One main number, same as the Today screen: what's left (or how much over).
           <>
-            <div className="text-xs text-tg-hint mt-1">{goal ? `из ${fmt(goal)} ккал` : 'ккал'}</div>
-            {left !== null && (
-              <div className="text-xs font-medium mt-1" style={{ color: left >= 0 ? 'var(--tg-theme-hint-color)' : color }}>
-                {left >= 0 ? `осталось ${fmt(left)}` : `+${fmt(-left)} сверх`}
-              </div>
-            )}
+            <div className="text-xs text-tg-hint">{left >= 0 ? 'осталось' : 'сверх нормы'}</div>
+            <div
+              className="font-display text-2xl leading-none mt-1"
+              style={{ color: left >= 0 ? 'var(--tg-theme-text-color)' : 'var(--over)' }}
+            >
+              {fmt(Math.abs(left))}
+            </div>
+            <div className="text-xs text-tg-hint mt-1">
+              {fmt(eaten)} из {fmt(goal!)}
+            </div>
           </>
         )}
+        {!compact && left === null && <div className="text-xs text-tg-hint mt-1">ккал</div>}
       </div>
     </div>
   );

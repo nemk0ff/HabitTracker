@@ -6,6 +6,13 @@ import { track } from '../services/analytics.js';
 /** Non-level habit kinds. The measure is fixed at creation — entries of an existing habit aren't converted. */
 export const HABIT_MEASURES = ['hours'];
 
+/** null = every day; otherwise N times a week. 7 is the same as daily, so it's stored as null. */
+function parseWeeklyTarget(v: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (v === null || v === 7) return { ok: true, value: null };
+  if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 6) return { ok: true, value: v };
+  return { ok: false };
+}
+
 export async function habitsRoutes(app: FastifyInstance) {
   app.addHook('onRequest', authGuard);
 
@@ -34,6 +41,7 @@ export async function habitsRoutes(app: FastifyInstance) {
       icon: h.icon,
       binary: h.binary,
       measure: h.measure,
+      weeklyTarget: h.weeklyTarget,
       createdAt: h.createdAt.toISOString(),
       entries: h.entries.map((e) => ({
         id: e.id,
@@ -43,7 +51,9 @@ export async function habitsRoutes(app: FastifyInstance) {
     }));
   });
 
-  app.post<{ Body: { name: string; color?: string; icon?: string; binary?: boolean; measure?: string | null } }>(
+  app.post<{
+    Body: { name: string; color?: string; icon?: string; binary?: boolean; measure?: string | null; weeklyTarget?: number | null };
+  }>(
     '/habits',
     async (request, reply) => {
       const { userId } = (request as any).user as JwtPayload;
@@ -51,6 +61,8 @@ export async function habitsRoutes(app: FastifyInstance) {
       if (measure != null && !HABIT_MEASURES.includes(measure)) {
         return reply.status(400).send({ error: `measure must be one of ${HABIT_MEASURES.join(', ')}` });
       }
+      const weekly = parseWeeklyTarget(request.body.weeklyTarget ?? null);
+      if (!weekly.ok) return reply.status(400).send({ error: 'weeklyTarget must be null or 1-7' });
 
       const trimmedName = name?.trim();
       if (!trimmedName) {
@@ -68,6 +80,7 @@ export async function habitsRoutes(app: FastifyInstance) {
           icon: icon || null,
           binary: measure ? false : (binary ?? false),
           measure: measure ?? null,
+          weeklyTarget: weekly.value,
         },
       });
 
@@ -86,13 +99,17 @@ export async function habitsRoutes(app: FastifyInstance) {
         icon: habit.icon,
         binary: habit.binary,
         measure: habit.measure,
+        weeklyTarget: habit.weeklyTarget,
         createdAt: habit.createdAt.toISOString(),
         entries: [],
       };
     },
   );
 
-  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string; icon?: string; binary?: boolean } }>(
+  app.patch<{
+    Params: { id: string };
+    Body: { name?: string; color?: string; icon?: string; binary?: boolean; weeklyTarget?: number | null };
+  }>(
     '/habits/:id',
     async (request, reply) => {
       const { userId } = (request as any).user as JwtPayload;
@@ -110,6 +127,8 @@ export async function habitsRoutes(app: FastifyInstance) {
       if (trimmedName !== undefined && trimmedName.length > 30) {
         return reply.status(400).send({ error: 'Name must be 30 characters or fewer' });
       }
+      const weekly = request.body.weeklyTarget === undefined ? null : parseWeeklyTarget(request.body.weeklyTarget);
+      if (weekly && !weekly.ok) return reply.status(400).send({ error: 'weeklyTarget must be null or 1-7' });
       const habit = await prisma.habit.update({
         where: { id: habitId },
         data: {
@@ -117,6 +136,7 @@ export async function habitsRoutes(app: FastifyInstance) {
           ...(color !== undefined && { color }),
           ...(icon !== undefined && { icon }),
           ...(binary !== undefined && { binary }),
+          ...(weekly?.ok && { weeklyTarget: weekly.value }),
         },
       });
 
@@ -129,6 +149,7 @@ export async function habitsRoutes(app: FastifyInstance) {
         icon: habit.icon,
         binary: habit.binary,
         measure: habit.measure,
+        weeklyTarget: habit.weeklyTarget,
         createdAt: habit.createdAt.toISOString(),
       };
     },

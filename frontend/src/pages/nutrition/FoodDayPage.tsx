@@ -1,5 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import {
+  Apple,
+  CalendarDays,
+  ChartColumn,
+  ChevronLeft,
+  ChevronRight,
+  Coffee,
+  Dumbbell,
+  Moon,
+  Scale,
+  Soup,
+  Target,
+  Utensils,
+  UtensilsCrossed,
+} from 'lucide-react';
 import { addDays, parseISO } from 'date-fns';
 import { useNavStore } from '../../stores/navStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
@@ -11,7 +26,7 @@ import { WeightSheet } from '../../components/nutrition/WeightSheet';
 import { InsightsCard } from '../../components/nutrition/InsightsCard';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { toDateString } from '../../utils/dates';
-import { MEALS, NUTRITION_COLOR, fmt, formatDayTitle, mealByTime, mealLabel, sumMacros } from '../../utils/nutrition';
+import { MEALS, fmt, formatDayTitle, mealByTime, mealLabel, sumMacros } from '../../utils/nutrition';
 import { fetchFrequent, type FrequentFood } from '../../api/nutrition';
 import { toast } from '../../stores/toastStore';
 import type { FoodLogEntry, Meal, NutritionGoal } from '../../types';
@@ -115,75 +130,102 @@ export function FoodDayPage() {
       className="scrollable"
     >
       <div className="p-4 pb-24">
-        {/* Date navigation */}
-        <div className="flex items-center justify-between mb-3">
-          <button onClick={() => go(shiftDate(date, -1))} className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-tg-secondary text-tg-text">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M12 4L6 10L12 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+        {/* Header: day switcher on the left, stats and goal as icons on the right */}
+        <div className="flex items-center mb-3 -mx-1">
+          <button
+            onClick={() => go(shiftDate(date, -1))}
+            aria-label="Предыдущий день"
+            className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-tg-secondary text-tg-text"
+          >
+            <ChevronLeft size={22} aria-hidden />
           </button>
-          <button onClick={() => setCalendarOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl active:bg-tg-secondary">
-            <span className="text-lg font-bold text-tg-text capitalize">{formatDayTitle(date, today)}</span>
-            <span className="text-sm">📅</span>
+          <button
+            onClick={() => setCalendarOpen(true)}
+            className="flex items-center gap-1.5 px-2 min-h-[40px] rounded-xl active:bg-tg-secondary"
+          >
+            <span className="text-lg font-semibold text-tg-text">{capitalizeFirst(formatDayTitle(date, today))}</span>
+            <CalendarDays size={18} className="text-tg-hint" aria-hidden />
           </button>
           <button
             onClick={() => go(shiftDate(date, 1))}
             disabled={date >= today}
+            aria-label="Следующий день"
             className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-tg-secondary text-tg-text disabled:opacity-30"
           >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M8 4L14 10L8 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <ChevronRight size={22} aria-hidden />
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={() => navigate('food-stats')}
+            aria-label="Статистика"
+            className="w-11 h-11 flex items-center justify-center rounded-xl active:bg-tg-secondary text-tg-text"
+          >
+            <ChartColumn size={22} aria-hidden />
+          </button>
+          <button
+            onClick={() => navigate('food-goal')}
+            aria-label="Цель и вес"
+            className="w-11 h-11 flex items-center justify-center rounded-xl active:bg-tg-secondary text-tg-text"
+          >
+            <Target size={22} aria-hidden />
           </button>
         </div>
 
         {/* Summary */}
-        <div className="bg-tg-section rounded-2xl p-4 flex items-center gap-5">
-          <CalorieRing eaten={day?.totals.kcal ?? 0} goal={effectiveGoal?.kcal ?? null} size={130} stroke={11} />
-          <MacroBars totals={day?.totals ?? { kcal: 0, protein: 0, fat: 0, carbs: 0 }} goal={effectiveGoal} />
-        </div>
-
-        {/* Day context: target source, training, weight, sleep */}
-        {plan && plan.mode !== 'none' && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            <Chip>{plan.mode === 'adaptive' ? `📈 Норма по твоему расходу ~${fmt(plan.tdee ?? 0)}` : '🎯 Норма по цели'}</Chip>
-            {plan.isTrainingDay && <Chip>💪 Тренировка +{plan.trainingBonus}</Chip>}
-            {plan.sleepLastNightH !== null && <Chip>😴 {fmt(plan.sleepLastNightH, 1)} ч</Chip>}
+        <div className="bg-tg-section rounded-2xl p-4">
+          <div className="flex items-center gap-5">
+            <CalorieRing eaten={day?.totals.kcal ?? 0} goal={effectiveGoal?.kcal ?? null} size={130} stroke={11} />
+            <MacroBars totals={day?.totals ?? { kcal: 0, protein: 0, fat: 0, carbs: 0 }} goal={effectiveGoal} />
           </div>
-        )}
 
-        <button
-          onClick={() => setWeightOpen(true)}
-          className="w-full mt-3 bg-tg-section rounded-xl px-4 py-3 flex items-center justify-between active:opacity-70"
-        >
-          <span className="text-sm text-tg-text">
-            ⚖️ {plan?.weightKg != null ? `Вес: ${fmt(plan.weightKg, 1)} кг` : date === today ? 'Взвеситься' : 'Вес не записан'}
-          </span>
-          {plan?.trendKg != null && <span className="text-xs text-tg-hint">тренд {fmt(plan.trendKg, 1)} кг</span>}
-        </button>
+          {/* Day context in one line: where the target comes from, training, sleep */}
+          {plan && plan.mode !== 'none' && (
+            <p className="text-sm text-tg-hint mt-3 flex flex-wrap items-center gap-x-1">
+              <span>{plan.mode === 'adaptive' ? 'Норма подстроена под твой вес' : 'Норма по цели'}</span>
+              {plan.isTrainingDay && (
+                <span className="inline-flex items-center gap-1">
+                  · <Dumbbell size={14} aria-hidden /> тренировка +{plan.trainingBonus}
+                </span>
+              )}
+              {plan.sleepLastNightH !== null && (
+                <span className="inline-flex items-center gap-1">
+                  · <Moon size={14} aria-hidden /> {fmt(plan.sleepLastNightH, 1)} ч
+                </span>
+              )}
+            </p>
+          )}
+
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => setWeightOpen(true)}
+              className="flex-1 min-w-0 min-h-[44px] rounded-xl px-3 flex items-center gap-2 text-sm text-tg-text active:opacity-70"
+              style={{ backgroundColor: 'var(--tg-theme-secondary-bg-color)' }}
+            >
+              <Scale size={18} className="text-tg-hint shrink-0" aria-hidden />
+              <span className="truncate">
+                {plan?.weightKg != null ? `${fmt(plan.weightKg, 1)} кг` : date === today ? 'Взвеситься' : 'Вес не записан'}
+                {plan?.trendKg != null && <span className="text-tg-hint"> · тренд {fmt(plan.trendKg, 1)}</span>}
+              </span>
+            </button>
+            <button
+              onClick={() => navigate('food-suggest')}
+              className="shrink-0 whitespace-nowrap min-h-[44px] rounded-xl px-4 flex items-center justify-center gap-2 text-sm font-medium active:opacity-70"
+              style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent)' }}
+            >
+              <Utensils size={18} aria-hidden /> Что доесть
+            </button>
+          </div>
+        </div>
 
         {plan && plan.insights.length > 0 && <InsightsCard insights={plan.insights} />}
-
-        {/* Shortcuts */}
-        <div className="flex gap-2 mt-3">
-          <button onClick={() => navigate('food-suggest')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-xs font-medium text-tg-text active:opacity-70">
-            🍽 Что доесть
-          </button>
-          <button onClick={() => navigate('food-stats')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-xs font-medium text-tg-text active:opacity-70">
-            📊 Статистика
-          </button>
-          <button onClick={() => navigate('food-goal')} className="flex-1 bg-tg-section rounded-xl py-2.5 text-xs font-medium text-tg-text active:opacity-70">
-            🎯 Цель и вес
-          </button>
-        </div>
 
         {day && !day.goal && (
           <button
             onClick={() => navigate('food-goal')}
             className="w-full mt-3 rounded-xl px-4 py-3 text-left text-sm"
-            style={{ backgroundColor: `${NUTRITION_COLOR}1a`, color: NUTRITION_COLOR }}
+            style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--accent)' }}
           >
-            Поставь цель по калориям — и я буду считать, сколько осталось →
+            Поставь цель по калориям, чтобы видеть остаток на день
           </button>
         )}
 
@@ -214,7 +256,7 @@ export function FoodDayPage() {
               <div key={meal.key} className="bg-tg-section rounded-2xl overflow-hidden">
                 <div className="flex items-center justify-between px-4 pt-3 pb-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">{meal.icon}</span>
+                    <MealIcon meal={meal.key} />
                     <span className="text-sm font-semibold text-tg-text">{meal.label}</span>
                   </div>
                   {entries.length > 0 && <span className="text-sm text-tg-hint">{fmt(total.kcal)} ккал</span>}
@@ -240,7 +282,7 @@ export function FoodDayPage() {
                   <button
                     onClick={() => navigate('food-add', { foodMeal: meal.key })}
                     className="flex-1 min-h-[44px] px-4 text-left text-sm font-medium active:opacity-70"
-                    style={{ color: NUTRITION_COLOR }}
+                    style={{ color: 'var(--accent)' }}
                   >
                     + Добавить
                   </button>
@@ -325,6 +367,13 @@ export function FoodDayPage() {
   );
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
-  return <span className="text-xs px-2 py-1 rounded-full bg-tg-section text-tg-hint">{children}</span>;
+const MEAL_ICONS: Record<Meal, typeof Coffee> = { breakfast: Coffee, lunch: Soup, dinner: UtensilsCrossed, snack: Apple };
+
+function MealIcon({ meal }: { meal: Meal }) {
+  const Icon = MEAL_ICONS[meal];
+  return <Icon size={20} className="text-tg-hint" aria-hidden />;
+}
+
+function capitalizeFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

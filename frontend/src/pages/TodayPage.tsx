@@ -13,7 +13,7 @@ import { WeightSheet } from '../components/nutrition/WeightSheet';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { toDateString } from '../utils/dates';
 import { MACRO_COLORS, fmt, mealByTime } from '../utils/nutrition';
-import { formatHours, isHoursHabit } from '../utils/habits';
+import { formatHours, isHoursHabit, weekProgress } from '../utils/habits';
 import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
 import type { Habit } from '../types';
 
@@ -60,9 +60,7 @@ export function TodayPage() {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="scrollable">
       <div className="p-4 pb-10">
-        <h1 className="text-xl font-semibold text-tg-text capitalize mb-4">
-          {format(new Date(), 'EEEE, d MMMM', { locale: ru })}
-        </h1>
+        <h1 className="text-xl font-semibold text-tg-text mb-4">{capitalizeFirst(format(new Date(), 'EEEE, d MMMM', { locale: ru }))}</h1>
 
         {/* The day's main block: what's left to eat + weight */}
         {nutrition && (
@@ -203,6 +201,7 @@ function HabitTile({ habit, date, onTap, onOpen }: { habit: Habit; date: string;
   const entry = habit.entries.find((e) => e.date === date && e.value > 0);
   const done = !!entry;
   const hours = isHoursHabit(habit);
+  const week = weekProgress(habit, date);
   return (
     <div className="relative">
       <motion.button
@@ -221,6 +220,29 @@ function HabitTile({ habit, date, onTap, onOpen }: { habit: Habit; date: string;
         <span>
           {hours && done && <span className="block font-display text-base leading-tight">{formatHours(entry!.value)}</span>}
           <span className="block text-sm font-medium leading-tight line-clamp-2">{habit.name}</span>
+          {/* This week at a glance: "2 из 3" for weekly goals, seven day dots for daily habits */}
+          {habit.weeklyTarget ? (
+            <span
+              className="block text-xs mt-1 whitespace-nowrap"
+              style={{ opacity: done ? 0.9 : 0.6 }}
+              aria-label={`На этой неделе ${week.done} из ${week.target}`}
+            >
+              {week.done} из {week.target} в нед.
+            </span>
+          ) : (
+            <span className="flex gap-[3px] mt-1.5" aria-label={`На этой неделе: ${week.done} из 7`}>
+              {week.days.map((d) => (
+                <span
+                  key={d.date}
+                  className="w-[7px] h-[7px] rounded-full"
+                  style={{
+                    backgroundColor: d.done ? (done ? '#fff' : habit.color) : 'currentColor',
+                    opacity: d.done ? 1 : d.future ? 0.12 : 0.25,
+                  }}
+                />
+              ))}
+            </span>
+          )}
         </span>
       </motion.button>
       <button
@@ -233,4 +255,9 @@ function HabitTile({ habit, date, onTap, onOpen }: { habit: Habit; date: string;
       </button>
     </div>
   );
+}
+
+/** "среда, 7 октября" → "Среда, 7 октября" (CSS `capitalize` would also capitalize the month). */
+function capitalizeFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

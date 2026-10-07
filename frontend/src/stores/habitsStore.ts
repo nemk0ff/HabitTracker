@@ -9,8 +9,8 @@ interface HabitsState {
   error: string | null;
 
   load: () => Promise<void>;
-  addHabit: (data: { name: string; color?: string; icon?: string; binary?: boolean; measure?: 'hours' | null }) => Promise<void>;
-  editHabit: (id: number, data: { name?: string; color?: string; icon?: string; binary?: boolean }) => Promise<void>;
+  addHabit: (data: { name: string; color?: string; icon?: string; binary?: boolean; measure?: 'hours' | null; weeklyTarget?: number | null }) => Promise<void>;
+  editHabit: (id: number, data: { name?: string; color?: string; icon?: string; binary?: boolean; weeklyTarget?: number | null }) => Promise<void>;
   removeHabit: (id: number) => Promise<void>;
   toggleEntry: (habitId: number, date: string, value: number) => Promise<void>;
 }
