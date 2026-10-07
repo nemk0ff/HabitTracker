@@ -3,10 +3,10 @@ import { ru } from 'date-fns/locale';
 import type { DayTotals, Food, Macros, Meal, NutritionGoal, WeightPoint } from '../types';
 
 /** Accent color of the nutrition module (heatmap, rings, buttons). */
-export const NUTRITION_COLOR = '#FF9800';
+export const NUTRITION_COLOR = '#2E9A6E';
 /** Neutral progress-track color readable in both light and dark Telegram themes. */
 export const TRACK_COLOR = 'rgba(128,128,128,0.18)';
-export const MACRO_COLORS = { protein: '#E91E63', fat: '#FFC107', carbs: '#2196F3' };
+export const MACRO_COLORS = { protein: '#C2366A', fat: '#C9971C', carbs: '#4A74C0' };
 
 export const MEALS: { key: Meal; label: string; icon: string }[] = [
   { key: 'breakfast', label: 'Завтрак', icon: '🍳' },
@@ -63,8 +63,8 @@ export function sumMacros(items: Macros[]): Macros {
 
 export function foodSourceLabel(f: Food): string {
   if (f.own) return 'Мой';
-  if (f.source === 'off') return 'OFF';
-  if (f.source === 'llm') return 'ИИ';
+  if (f.source === 'off') return 'Из интернета';
+  if (f.source === 'llm') return 'Нашёл агент';
   return 'База';
 }
 

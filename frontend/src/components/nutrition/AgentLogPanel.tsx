@@ -123,7 +123,7 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
                   <div className="text-sm text-tg-text">
                     {i.name}
                     <span
-                      className="ml-1.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full align-middle"
+                      className="ml-1.5 text-xs font-semibold px-1.5 py-0.5 rounded-full align-middle"
                       style={
                         i.status === 'new'
                           ? { backgroundColor: `${NUTRITION_COLOR}22`, color: NUTRITION_COLOR }
@@ -133,7 +133,7 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
                       {i.status === 'new' ? 'новый в базе' : 'из базы'}
                     </span>
                   </div>
-                  <div className="text-[11px] text-tg-hint">
+                  <div className="text-xs text-tg-hint">
                     {i.brand ? `${i.brand} · ` : ''}
                     {fmt(i.grams)} г · Б {fmt(i.protein, 1)} · Ж {fmt(i.fat, 1)} · У {fmt(i.carbs, 1)}
                   </div>

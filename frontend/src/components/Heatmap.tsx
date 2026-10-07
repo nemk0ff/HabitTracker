@@ -100,7 +100,7 @@ export function Heatmap({ entries, color, binary = false, onToggle, onSelect, se
       {/* Weekday headers */}
       <div className="grid grid-cols-7 mb-2">
         {WEEKDAY_LABELS.map((label) => (
-          <div key={label} className="text-center text-[11px] font-medium text-tg-hint">
+          <div key={label} className="text-center text-xs font-medium text-tg-hint">
             {label}
           </div>
         ))}
@@ -111,7 +111,7 @@ export function Heatmap({ entries, color, binary = false, onToggle, onSelect, se
         <motion.div
           key={`${year}-${month}`}
           initial={{ opacity: 0, x: direction * 40 }}
-          animate={{ opacity: 1, x: 0 }}
+          animate={{ opacity: 1 }}
           exit={{ opacity: 0, x: direction * -40 }}
           transition={{ duration: 0.2 }}
           className="flex flex-col gap-[5px]"
@@ -135,7 +135,7 @@ export function Heatmap({ entries, color, binary = false, onToggle, onSelect, se
                     whileTap={isFuture ? {} : { scale: 0.85 }}
                     onClick={() => !isFuture && handleCellTap(dateStr)}
                     disabled={isFuture}
-                    className="aspect-square rounded-lg flex items-center justify-center text-[11px] font-medium transition-colors disabled:opacity-30 relative"
+                    className="aspect-square rounded-lg flex items-center justify-center text-xs font-medium transition-colors disabled:opacity-30 relative"
                     style={{ backgroundColor: bg }}
                   >
                     {selectedDate === dateStr && (

@@ -62,9 +62,9 @@ export function FoodStatsPage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 30 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -30 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="scrollable"
     >
@@ -118,7 +118,7 @@ export function FoodStatsPage() {
         {/* Calendar */}
         <div className="bg-tg-section rounded-2xl p-4">
           <Heatmap entries={heat} color={NUTRITION_COLOR} onSelect={(date) => navigate('food-day', { foodDate: date })} />
-          <p className="text-[11px] text-tg-hint text-center mt-3">
+          <p className="text-xs text-tg-hint text-center mt-3">
             {goalKcal ? 'Ярче — ближе к цели (90–110%). Нажми на день, чтобы открыть его' : 'Нажми на день, чтобы открыть его'}
           </p>
         </div>

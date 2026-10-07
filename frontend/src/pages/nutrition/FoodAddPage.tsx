@@ -87,9 +87,9 @@ export function FoodAddPage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 30 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -30 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="scrollable"
     >
@@ -213,7 +213,7 @@ function FoodRow({
         <div className="flex items-center gap-1.5">
           <span className="text-sm text-tg-text truncate">{food.name}</span>
           <span
-            className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
+            className="shrink-0 text-xs font-semibold px-1.5 py-0.5 rounded-full"
             style={
               food.own
                 ? { backgroundColor: `${NUTRITION_COLOR}22`, color: NUTRITION_COLOR }
@@ -223,7 +223,7 @@ function FoodRow({
             {foodSourceLabel(food)}
           </span>
         </div>
-        <div className="text-[11px] text-tg-hint truncate">
+        <div className="text-xs text-tg-hint truncate">
           {food.brand ? `${food.brand} · ` : ''}
           {fmt(food.kcal)} ккал · Б {fmt(food.protein, 1)} · Ж {fmt(food.fat, 1)} · У {fmt(food.carbs, 1)} на 100 г
         </div>

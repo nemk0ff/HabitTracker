@@ -112,6 +112,34 @@ export async function nutritionRoutes(app: FastifyInstance) {
     return recentFoods(userId);
   });
 
+  /** Most frequent foods for a meal over the last 45 days, with the last-used grams (quick-add chips). */
+  app.get<{ Querystring: { meal?: string } }>('/nutrition/foods/frequent', async (request, reply) => {
+    const userId = (request as any).user.userId;
+    const meal = request.query.meal;
+    if (!isMeal(meal)) return reply.status(400).send({ error: 'invalid meal' });
+    const since = new Date(Date.now() - 45 * 86_400_000);
+    const rows = await prisma.foodLogEntry.findMany({
+      where: { userId, meal, foodId: { not: null }, date: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      select: { foodId: true, grams: true },
+    });
+    const stats = new Map<number, { count: number; grams: number }>();
+    for (const r of rows) {
+      const s = stats.get(r.foodId!);
+      if (s) s.count++;
+      else stats.set(r.foodId!, { count: 1, grams: r.grams }); // rows are newest first → last-used grams
+    }
+    const top = [...stats.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 6);
+    const [foods, favs] = await Promise.all([
+      prisma.food.findMany({ where: { id: { in: top.map(([id]) => id) } } }),
+      favoriteIds(userId),
+    ]);
+    const byId = new Map(foods.map((f) => [f.id, f]));
+    return top
+      .filter(([id]) => byId.has(id))
+      .map(([id, s]) => ({ food: serializeFood(byId.get(id)!, favs), grams: s.grams, count: s.count }));
+  });
+
   app.get('/nutrition/foods/mine', async (request) => {
     const userId = (request as any).user.userId;
     const [foods, favs] = await Promise.all([
@@ -229,16 +257,33 @@ export async function nutritionRoutes(app: FastifyInstance) {
     const date = parseDay(request.query.date);
     if (!date) return reply.status(400).send({ error: 'date must be YYYY-MM-DD' });
 
-    const [entries, goal] = await Promise.all([
+    const [entries, goal, mark] = await Promise.all([
       prisma.foodLogEntry.findMany({ where: { userId, date }, orderBy: { createdAt: 'asc' } }),
       prisma.nutritionGoal.findUnique({ where: { userId } }),
+      prisma.dayMark.findUnique({ where: { userId_date: { userId, date } } }),
     ]);
     return {
       date: dayString(date),
       entries: entries.map(serializeEntry),
       totals: sumMacros(entries),
       goal: serializeGoal(goal),
+      complete: mark?.complete ?? false,
     };
+  });
+
+  /** "День заполнен полностью" toggle (also set from the bot's evening prompt). */
+  app.put<{ Body: { date?: string; complete?: boolean } }>('/nutrition/day-complete', async (request, reply) => {
+    const userId = (request as any).user.userId;
+    const date = parseDay(request.body?.date);
+    if (!date) return reply.status(400).send({ error: 'date must be YYYY-MM-DD' });
+    const complete = request.body?.complete !== false;
+    await prisma.dayMark.upsert({
+      where: { userId_date: { userId, date } },
+      update: { complete },
+      create: { userId, date, complete },
+    });
+    track({ userId, event: 'day_marked_complete', category: 'miniapp', label: dayString(date) });
+    return { date: dayString(date), complete };
   });
 
   /**

@@ -2,10 +2,11 @@ import { useRef, useState, useLayoutEffect } from 'react';
 import { motion } from 'framer-motion';
 import { MiniHeatmap } from './MiniHeatmap';
 import { calculateStreak, toDateString } from '../utils/dates';
-import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { HoursSheet } from './HoursSheet';
 import { formatHours, isHoursHabit, levelEntries } from '../utils/habits';
+import { ChevronRight } from 'lucide-react';
+import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
 import type { Habit } from '../types';
 
 interface Props {
@@ -14,7 +15,6 @@ interface Props {
 }
 
 export function HabitCard({ habit, readOnly = false }: Props) {
-  const toggleEntry = useHabitsStore((s) => s.toggleEntry);
   const navigate = useNavStore((s) => s.navigate);
   const { current } = calculateStreak(habit.entries);
   const todayStr = toDateString(new Date());
@@ -45,15 +45,11 @@ export function HabitCard({ habit, readOnly = false }: Props) {
     return () => observer.disconnect();
   }, []);
 
+  // Tapping anywhere on the card marks today (the main action); details open via "›".
   const handleCheck = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (hours) {
-      setHoursOpen(true);
-      return;
-    }
-    const newValue = isDoneToday ? 0 : 1;
-    toggleEntry(habit.id, todayStr, newValue);
-    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
+    if (hours) setHoursOpen(true);
+    else toggleHabitDay(habit, todayStr);
   };
 
   return (
@@ -63,7 +59,7 @@ export function HabitCard({ habit, readOnly = false }: Props) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
       whileTap={readOnly ? undefined : { scale: 0.98 }}
-      onClick={readOnly ? undefined : () => navigate('habit', { selectedHabitId: habit.id })}
+      onClick={readOnly ? undefined : handleCheck}
       className={`bg-tg-section rounded-2xl p-4 transition-opacity ${
         readOnly ? '' : 'cursor-pointer active:opacity-80'
       }`}
@@ -87,7 +83,8 @@ export function HabitCard({ habit, readOnly = false }: Props) {
             <button
               onClick={readOnly ? undefined : handleCheck}
               disabled={readOnly}
-              className={`${hours && isDoneToday ? 'px-2 min-w-8' : 'w-8'} h-8 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0`}
+              aria-label={isDoneToday ? `${habit.name}: снять отметку` : `${habit.name}: отметить сегодня`}
+              className={`${hours && isDoneToday ? 'px-2 min-w-10' : 'w-10'} h-10 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0`}
               style={{
                 backgroundColor: isDoneToday ? habit.color : 'transparent',
                 border: isDoneToday ? 'none' : `2px solid ${habit.color}`,
@@ -110,6 +107,18 @@ export function HabitCard({ habit, readOnly = false }: Props) {
             </button>
             {habit.icon && (
               <span className="text-xl leading-none">{habit.icon}</span>
+            )}
+            {!readOnly && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate('habit', { selectedHabitId: habit.id });
+                }}
+                aria-label={`Открыть «${habit.name}»`}
+                className="w-10 h-10 -mr-2 flex items-center justify-center text-tg-hint"
+              >
+                <ChevronRight size={18} aria-hidden />
+              </button>
             )}
           </div>
 
@@ -139,7 +148,7 @@ export function HabitCard({ habit, readOnly = false }: Props) {
           minutes={todayEntry?.value ?? 0}
           color={habit.color}
           onClose={() => setHoursOpen(false)}
-          onSave={(m) => toggleEntry(habit.id, todayStr, m)}
+          onSave={(m) => setHabitValue(habit, todayStr, m)}
         />
       )}
     </motion.div>

@@ -48,6 +48,8 @@ export interface Plan {
   proteinTarget: number | null;
   /** Raw weigh-in on `date`, if any. */
   weightKg: number | null;
+  /** Latest raw weigh-in on or before `date` (base for the ±0.5 kg quick buttons). */
+  lastWeightKg: number | null;
   trendKg: number | null;
   trendKgPerWeek: number | null;
   trainingsPerWeek: number | null;
@@ -98,7 +100,7 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
     ? ((await prisma.habit.findFirst({ where: { id: goal.trainingHabitId, userId }, select: { createdAt: true } }))?.createdAt ?? null)
     : null;
 
-  const [weightsRaw, days, training, sleep] = await Promise.all([
+  const [weightsRaw, days, training, sleep, marks] = await Promise.all([
     prisma.weightEntry.findMany({ where: { userId, date: { lte: parseDay(date) } }, orderBy: { date: 'asc' } }),
     prisma.foodLogEntry.groupBy({
       by: ['date'],
@@ -119,6 +121,7 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
           },
         })
       : Promise.resolve([]),
+    prisma.dayMark.findMany({ where: { userId, date: { gte: parseDay(windowStart), lte: parseDay(date) } } }),
   ]);
 
   const weights = weightsRaw.map((w) => ({ date: day(w.date), weightKg: w.weightKg }));
@@ -135,7 +138,9 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
     .filter((d) => d.date < date && d.kcal > 0);
   const sortedKcal = pastDays.map((d) => d.kcal).sort((a, b) => a - b);
   const median = sortedKcal.length ? sortedKcal[Math.floor(sortedKcal.length / 2)]! : 0;
-  const complete = pastDays.filter((d) => d.kcal >= median * 0.6);
+  // Explicit "день полный" marks win; unmarked days fall back to the 60%-of-median heuristic.
+  const marked = new Map(marks.map((m) => [day(m.date), m.complete]));
+  const complete = pastDays.filter((d) => marked.get(d.date) ?? d.kcal >= median * 0.6);
   const avgIntake = complete.length ? complete.reduce((s, d) => s + d.kcal, 0) / complete.length : null;
 
   // ─── Adaptive TDEE ─────────────────────────────────────────────────────────
@@ -269,6 +274,7 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
     trainingBonus: TRAINING_BONUS,
     proteinTarget,
     weightKg: todayWeight,
+    lastWeightKg: weights.length ? weights[weights.length - 1]!.weightKg : null,
     trendKg: trendNow,
     trendKgPerWeek: trendKgPerWeek !== null ? Math.round(trendKgPerWeek * 100) / 100 : null,
     trainingsPerWeek,

@@ -55,7 +55,7 @@ export function HomePage() {
               onClick={() => navigate('admin')}
               className="px-3 py-1.5 rounded-xl text-sm font-medium bg-tg-secondary text-tg-text active:opacity-70 transition-opacity"
             >
-              👁 Все
+              Все пользователи
             </button>
           )}
         </div>

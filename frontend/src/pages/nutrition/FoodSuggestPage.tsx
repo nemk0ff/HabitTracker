@@ -75,9 +75,9 @@ export function FoodSuggestPage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 30 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -30 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="scrollable"
     >
@@ -211,13 +211,13 @@ function SuggestionCard({
     >
       <FavoriteStar active onToggle={onStar} className="absolute top-1 right-1" />
       <div className="text-sm font-medium text-tg-text leading-tight line-clamp-2">{s.food.name}</div>
-      {s.food.brand && <div className="text-[10px] text-tg-hint truncate mt-0.5">{s.food.brand}</div>}
-      <div className="text-[11px] text-tg-hint mt-1">{fmt(s.food.kcal)} ккал / 100 г</div>
+      {s.food.brand && <div className="text-xs text-tg-hint truncate mt-0.5">{s.food.brand}</div>}
+      <div className="text-xs text-tg-hint mt-1">{fmt(s.food.kcal)} ккал / 100 г</div>
       <div className="text-xs font-medium mt-2" style={{ color: dimmed ? 'var(--tg-theme-hint-color)' : NUTRITION_COLOR }}>
         {hint}
       </div>
       {!dimmed && s.gives.protein >= 1 && (
-        <div className="text-[11px] mt-0.5" style={{ color: MACRO_COLORS.protein }}>
+        <div className="text-xs mt-0.5" style={{ color: MACRO_COLORS.protein }}>
           +{fmt(s.gives.protein)} г белка
         </div>
       )}

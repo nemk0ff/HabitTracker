@@ -86,9 +86,9 @@ export function HabitDetailPage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 30 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -30 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="scrollable"
     >
@@ -151,7 +151,7 @@ export function HabitDetailPage() {
 
         {/* Legend */}
         {hours ? (
-          <div className="flex items-center justify-center gap-2 mb-8 text-[11px] text-tg-hint">
+          <div className="flex items-center justify-center gap-2 mb-8 text-xs text-tg-hint">
             {['< 5 ч', '5–7 ч', '7+ ч'].map((label, i) => (
               <span key={label} className="flex items-center gap-1">
                 <span
@@ -165,7 +165,7 @@ export function HabitDetailPage() {
             ))}
           </div>
         ) : habit.binary ? (
-          <div className="flex items-center justify-center gap-2 mb-8 text-[11px] text-tg-hint">
+          <div className="flex items-center justify-center gap-2 mb-8 text-xs text-tg-hint">
             <div
               className="w-4 h-4 rounded-[3px]"
               style={{ backgroundColor: window.Telegram?.WebApp?.colorScheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
@@ -175,7 +175,7 @@ export function HabitDetailPage() {
             <span>Выполнено</span>
           </div>
         ) : (
-          <div className="flex items-center justify-center gap-2 mb-8 text-[11px] text-tg-hint">
+          <div className="flex items-center justify-center gap-2 mb-8 text-xs text-tg-hint">
             <span>Меньше</span>
             {[0, 1, 2, 3].map((v) => (
               <div

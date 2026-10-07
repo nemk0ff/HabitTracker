@@ -27,7 +27,8 @@ interface NutritionState {
   addEntries: (inputs: LogInput[]) => Promise<void>;
   updateEntry: (entry: FoodLogEntry, data: { grams?: number; meal?: Meal }) => Promise<void>;
   removeEntry: (entry: FoodLogEntry) => Promise<void>;
-  copyDay: (fromDate: string, toDate: string) => Promise<number>;
+  copyDay: (fromDate: string, toDate: string, meal?: Meal) => Promise<number>;
+  setDayComplete: (date: string, complete: boolean) => Promise<void>;
   setGoal: (goal: NutritionGoal) => Promise<void>;
 }
 
@@ -162,9 +163,19 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
       }
     },
 
-    copyDay: async (fromDate, toDate) => {
+    setDayComplete: async (date, complete) => {
+      set((s) => (s.days[date] ? { days: { ...s.days, [date]: { ...s.days[date]!, complete } } } : s));
       try {
-        const created = await api.copyDay(fromDate, toDate);
+        await api.setDayComplete(date, complete);
+      } catch (e: any) {
+        set({ error: e.message });
+        get().loadDay(date);
+      }
+    },
+
+    copyDay: async (fromDate, toDate, meal) => {
+      try {
+        const created = await api.copyDay(fromDate, toDate, meal);
         patchDay(toDate, (entries) => [...entries, ...created]);
         return created.length;
       } catch (e: any) {

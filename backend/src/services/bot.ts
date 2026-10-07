@@ -104,6 +104,14 @@ bot.command('week', async (ctx) => {
   await ctx.reply(await weeklySummaryText(userId));
 });
 
+/** One-tap answers to the daily prompts (sleep / weight / training / day complete). */
+bot.callbackQuery(/^(sl|wt|tr|dc):/, async (ctx) => {
+  const { handlePromptCallback } = await import('./nutrition/prompts.js');
+  const result = await handlePromptCallback(ctx, ctx.callbackQuery.data ?? '');
+  await ctx.answerCallbackQuery(result ?? '');
+  if (result) await ctx.editMessageText(result).catch(() => {});
+});
+
 /** "↩️ Отменить" under a text-log result: removes the entries (and products) it created. */
 bot.callbackQuery(/^tlu:(.+)$/, async (ctx) => {
   const userId = await resolveUserId(ctx.from.id);

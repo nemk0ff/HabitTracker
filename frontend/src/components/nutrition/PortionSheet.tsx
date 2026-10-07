@@ -115,7 +115,7 @@ export function PortionSheet({ target, confirmLabel, onClose, onConfirm, onDelet
             ].map((c) => (
               <div key={c.label} className="bg-tg-secondary rounded-xl py-2 text-center">
                 <div className="text-base font-bold" style={{ color: c.color }}>{c.value}</div>
-                <div className="text-[10px] text-tg-hint">{c.label}</div>
+                <div className="text-xs text-tg-hint">{c.label}</div>
               </div>
             ))}
           </div>

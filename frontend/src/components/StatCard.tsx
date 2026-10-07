@@ -13,7 +13,7 @@ export function StatCard({ label, value, color }: Props) {
       >
         {value}
       </div>
-      <div className="text-[11px] text-tg-hint font-medium">{label}</div>
+      <div className="text-xs text-tg-hint font-medium">{label}</div>
     </div>
   );
 }

@@ -15,7 +15,7 @@ export function CalorieRing({ eaten, goal, size = 150, stroke = 12, compact = fa
   const c = 2 * Math.PI * r;
   const ratio = goal ? eaten / goal : 0;
   const shown = Math.min(ratio, 1);
-  const color = ratio > 1.1 ? '#F44336' : NUTRITION_COLOR;
+  const color = ratio > 1.1 ? '#E0602A' : NUTRITION_COLOR;
   const left = goal ? goal - eaten : null;
 
   return (
@@ -39,7 +39,7 @@ export function CalorieRing({ eaten, goal, size = 150, stroke = 12, compact = fa
         <div className={`${compact ? 'text-sm' : 'text-3xl'} font-bold text-tg-text leading-none`}>{fmt(eaten)}</div>
         {!compact && (
           <>
-            <div className="text-[11px] text-tg-hint mt-1">{goal ? `из ${fmt(goal)} ккал` : 'ккал'}</div>
+            <div className="text-xs text-tg-hint mt-1">{goal ? `из ${fmt(goal)} ккал` : 'ккал'}</div>
             {left !== null && (
               <div className="text-xs font-medium mt-1" style={{ color: left >= 0 ? 'var(--tg-theme-hint-color)' : color }}>
                 {left >= 0 ? `осталось ${fmt(left)}` : `+${fmt(-left)} сверх`}

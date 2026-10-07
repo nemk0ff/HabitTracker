@@ -21,6 +21,7 @@ model User {
   weights       WeightEntry[]
   nutritionGoal NutritionGoal?
   favorites     FavoriteFood[]
+  dayMarks      DayMark[]
 }
 
 model AnalyticsEvent {
@@ -170,4 +171,15 @@ model FavoriteFood {
   food      Food     @relation(fields: [foodId], references: [id], onDelete: Cascade)
 
   @@id([userId, foodId])
+}
+
+/// "День заполнен полностью" — the user's explicit mark; the model trusts it over its heuristic.
+model DayMark {
+  userId    Int
+  date      DateTime
+  complete  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, date])
 }

@@ -3,7 +3,8 @@ import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from './stores/authStore';
 import { useHabitsStore } from './stores/habitsStore';
 import { useNavStore } from './stores/navStore';
-import { HubPage } from './pages/HubPage';
+import { TodayPage } from './pages/TodayPage';
+import { Toaster } from './components/Toaster';
 import { HomePage } from './pages/HomePage';
 import { HabitDetailPage } from './pages/HabitDetailPage';
 import { HabitFormPage } from './pages/HabitFormPage';
@@ -105,8 +106,9 @@ export default function App() {
   const screen = navScreen.startsWith('food-') && !user?.features?.nutrition ? 'hub' : navScreen;
 
   return (
+    <>
     <AnimatePresence mode="wait">
-      {screen === 'hub' && <HubPage key="hub" />}
+      {screen === 'hub' && <TodayPage key="hub" />}
       {screen === 'home' && <HomePage key="home" />}
       {screen === 'admin' && <AdminPage key="admin" />}
       {screen === 'habit' && <HabitDetailPage key="habit" />}
@@ -118,5 +120,7 @@ export default function App() {
       {screen === 'food-goal' && <FoodGoalPage key="food-goal" />}
       {screen === 'food-suggest' && <FoodSuggestPage key="food-suggest" />}
     </AnimatePresence>
+    <Toaster />
+    </>
   );
 }

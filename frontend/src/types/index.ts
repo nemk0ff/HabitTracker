@@ -124,6 +124,8 @@ export interface FoodDay {
   entries: FoodLogEntry[];
   totals: Macros;
   goal: NutritionGoal | null;
+  /** User marked the day as fully logged. */
+  complete: boolean;
 }
 
 export interface DayTotals extends Macros {
@@ -161,6 +163,7 @@ export interface Plan {
   trainingBonus: number;
   proteinTarget: number | null;
   weightKg: number | null;
+  lastWeightKg: number | null;
   trendKg: number | null;
   trendKgPerWeek: number | null;
   trainingsPerWeek: number | null;

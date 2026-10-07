@@ -41,7 +41,7 @@ export function FoodCalendarSheet({ open, selectedDate, onClose, onSelect }: Pro
           onClose();
         }}
       />
-      <p className="text-[11px] text-tg-hint text-center mt-4">Чем ярче день — тем ближе к цели по калориям</p>
+      <p className="text-xs text-tg-hint text-center mt-4">Чем ярче день — тем ближе к цели по калориям</p>
     </BottomSheet>
   );
 }

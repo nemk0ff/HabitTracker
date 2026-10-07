@@ -54,6 +54,20 @@ export function deleteFood(id: number): Promise<void> {
   return api<void>(`${BASE}/foods/${id}`, { method: 'DELETE' });
 }
 
+export function setDayComplete(date: string, complete: boolean): Promise<void> {
+  return api<void>(`${BASE}/day-complete`, json('PUT', { date, complete }));
+}
+
+export interface FrequentFood {
+  food: Food;
+  grams: number;
+  count: number;
+}
+
+export function fetchFrequent(meal: Meal): Promise<FrequentFood[]> {
+  return api<FrequentFood[]>(`${BASE}/foods/frequent?meal=${meal}`);
+}
+
 export function fetchFavorites(): Promise<Food[]> {
   return api<Food[]>(`${BASE}/favorites`);
 }

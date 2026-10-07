@@ -36,7 +36,7 @@ export function MiniHeatmap({ entries, color, binary = false, weeks = 18, showDa
         {monthLabels.map((m) => (
           <span
             key={`${m.label}-${m.colIndex}`}
-            className="absolute text-[10px] text-tg-hint font-medium capitalize"
+            className="absolute text-xs text-tg-hint font-medium capitalize"
             style={{ left: m.colIndex * (cellSize + gap) }}
           >
             {m.label}
@@ -52,7 +52,7 @@ export function MiniHeatmap({ entries, color, binary = false, weeks = 18, showDa
             {DAY_LABELS.map((label, i) => (
               <div
                 key={i}
-                className="flex items-center text-[9px] text-tg-hint font-medium"
+                className="flex items-center text-xs text-tg-hint font-medium"
                 style={{ height: cellSize }}
               >
                 {label}
