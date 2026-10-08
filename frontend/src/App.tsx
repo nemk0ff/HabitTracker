@@ -104,7 +104,7 @@ export default function App() {
     if (hs.loading) return;
     onboardingChecked.current = true;
     if (hs.error) return;
-    if (!user.onboarded && hs.habits.length === 0 && navScreen === 'hub') navigate('onboarding');
+    if (!user.onboarded && !hs.habits.some((h) => !h.archived) && navScreen === 'hub') navigate('onboarding');
   }, [user, habits.length, habitsLoading, habitsError, navScreen, navigate]);
 
   if (authLoading) {

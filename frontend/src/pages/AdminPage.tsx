@@ -4,6 +4,7 @@ import { useNavStore } from '../stores/navStore';
 import { HabitCard } from '../components/HabitCard';
 import { fetchAllHabits } from '../api/admin';
 import { useBackButton, useMainButton } from '../hooks/useTelegramButtons';
+import { sortHabits } from '../utils/habits';
 import type { AdminUserGroup } from '../types';
 
 function relativeTime(iso: string | null): string {
@@ -69,9 +70,14 @@ export function AdminPage() {
                     {relativeTime(group.user.lastSeenAt)}
                   </span>
                 </div>
-                {group.habits.map((habit) => (
+                {sortHabits(group.habits).map((habit) => (
                   <HabitCard key={habit.id} habit={habit} readOnly />
                 ))}
+                {group.habits.some((h) => h.archived) && (
+                  <p className="text-xs text-tg-hint">
+                    В архиве: {group.habits.filter((h) => h.archived).map((h) => h.name).join(', ')}
+                  </p>
+                )}
               </div>
             ))}
           </div>

@@ -92,7 +92,7 @@ async function checkAndSendReminders() {
   const { hhmm, todayStart, timestamp } = utcNow();
 
   const reminders = await prisma.reminder.findMany({
-    where: { enabled: true },
+    where: { enabled: true, habit: { archived: false } },
     include: {
       habit: {
         include: {

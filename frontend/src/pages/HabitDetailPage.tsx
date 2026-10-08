@@ -8,10 +8,12 @@ import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButton
 import { Heatmap } from '../components/Heatmap';
 import { StatCard } from '../components/StatCard';
 import { NotificationSheet, utcTimeToLocal } from '../components/NotificationSheet';
-import { calculateStreak, getMonthCompletionRate } from '../utils/dates';
+import { getMonthCompletionRate } from '../utils/dates';
 import { fetchReminder, saveReminder } from '../api/habits';
 import { HoursSheet } from '../components/HoursSheet';
-import { averageHours, formatHours, isHoursHabit, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
+import { doneEntries, formatHours, isCountHabit, isHoursHabit, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
+import { averageValue, formatNumber, streaks, valueOn } from '../utils/habitStats';
+import { countTarget } from '../utils/habitActions';
 import { toDateString } from '../utils/dates';
 import { HabitDaySheet } from '../components/HabitDaySheet';
 import { SleepChart } from '../components/SleepChart';
@@ -60,21 +62,28 @@ export function HabitDetailPage() {
     );
   }
 
-  const { current, best } = calculateStreak(habit.entries);
+  const { current, best } = streaks(habit);
   const now = new Date();
-  const completionRate = getMonthCompletionRate(habit.entries, now.getFullYear(), now.getMonth());
+  const completionRate = getMonthCompletionRate(doneEntries(habit), now.getFullYear(), now.getMonth());
 
   const hours = isHoursHabit(habit);
   const reminderOn = !!reminder?.enabled && reminder.days.length > 0;
   const today = toDateString(now);
-  const avg7 = hours ? averageHours(habit.entries, toDateString(new Date(Date.now() - 6 * 86_400_000))) : null;
+  const avg7 = hours ? averageValue(habit, 7, today) : null;
   const week = weekProgress(habit, today);
 
   // Calendar edits go through the same path as the Today screen: undo toast, no silent rewrites.
   const saveDay = (date: string, value: number) => setHabitValue(habit, date, value, { askIntensity: false });
 
   // Weekly-goal habits are judged by weeks, daily ones by days in a row.
-  const stats: { label: string; value: string | number }[] = hours
+  const avg30 = averageValue(habit, 30, today);
+  const stats: { label: string; value: string | number }[] = isCountHabit(habit)
+    ? [
+        { label: 'Сегодня', value: `${valueOn(habit, today)}/${countTarget(habit)}` },
+        { label: 'Дней подряд', value: current },
+        { label: 'Среднее за 30 дн', value: avg30 !== null ? formatNumber(avg30) : '—' },
+      ]
+    : hours
     ? [
         { label: 'Дней подряд', value: current },
         { label: 'Рекорд, дней', value: best },

@@ -1,6 +1,7 @@
 import { addDays, parseISO, startOfWeek, subWeeks } from 'date-fns';
 import { toDateString } from './dates';
-import type { Habit, HabitEntry } from '../types';
+import { habitStartDate } from './habitStats';
+import type { Habit, HabitEntry, TimeOfDay } from '../types';
 
 /** Hours habits store minutes in `value`. */
 export function isHoursHabit(h: Pick<Habit, 'measure'>): boolean {
@@ -15,20 +16,51 @@ export function hoursLevel(minutes: number): number {
   return 3;
 }
 
-/** Entries as heatmap levels (hours habits are bucketed, others pass through). */
+/** Count habits store how many were done in `value` and are done once it reaches `dailyTarget`. */
+export function isCountHabit(h: Pick<Habit, 'measure'>): boolean {
+  return h.measure === 'count';
+}
+
+/** Single source of truth for "this day counts as done" across every habit kind. */
+export function isDoneValue(h: Pick<Habit, 'measure' | 'dailyTarget'>, value: number): boolean {
+  if (value <= 0) return false;
+  if (isCountHabit(h)) return value >= Math.max(1, h.dailyTarget ?? 1);
+  return true;
+}
+
+/** Heatmap intensity 0–3 for any habit kind (count: share of the daily target). */
+export function entryLevel(h: Pick<Habit, 'measure' | 'dailyTarget' | 'binary'>, value: number): number {
+  if (value <= 0) return 0;
+  if (isHoursHabit(h)) return hoursLevel(value);
+  if (isCountHabit(h)) {
+    const share = value / Math.max(1, h.dailyTarget ?? 1);
+    return share >= 1 ? 3 : share >= 0.5 ? 2 : 1;
+  }
+  return h.binary ? 3 : Math.min(value, 3);
+}
+
+/** Entries as heatmap levels 0–3 (hours/count are bucketed, binary is always full). */
 export function levelEntries(h: Habit): HabitEntry[] {
-  return isHoursHabit(h) ? h.entries.map((e) => ({ ...e, value: hoursLevel(e.value) })) : h.entries;
+  return h.entries.map((e) => ({ ...e, value: entryLevel(h, e.value) }));
+}
+
+export const TIME_OF_DAY: { key: TimeOfDay | null; label: string }[] = [
+  { key: 'morning', label: 'Утро' },
+  { key: 'day', label: 'День' },
+  { key: 'evening', label: 'Вечер' },
+  { key: null, label: 'В любое время' },
+];
+
+/** Manual order first, then creation — the order of Today and Progress. Archived habits are excluded. */
+export function sortHabits(habits: Habit[]): Habit[] {
+  return habits
+    .filter((h) => !h.archived)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt));
 }
 
 export function formatHours(minutes: number): string {
   const h = Math.round((minutes / 60) * 10) / 10;
   return `${h.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ч`;
-}
-
-/** Average of the hours entries within the last `days` days, or null. */
-export function averageHours(entries: HabitEntry[], sinceDate: string): number | null {
-  const xs = entries.filter((e) => e.date >= sinceDate && e.value > 0).map((e) => e.value);
-  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 }
 
 /** The Monday-based week containing `date`, as 7 YYYY-MM-DD strings. */
@@ -44,8 +76,13 @@ export interface WeekProgress {
   target: number;
 }
 
+/** Entries that count as a done day (count habits: value ≥ dailyTarget). */
+export function doneEntries(h: Habit): HabitEntry[] {
+  return h.entries.filter((e) => isDoneValue(h, e.value));
+}
+
 function markedDates(h: Habit): Set<string> {
-  return new Set(h.entries.filter((e) => e.value > 0).map((e) => e.date));
+  return new Set(doneEntries(h).map((e) => e.date));
 }
 
 /** This week's marks against the habit's frequency goal. */
@@ -57,7 +94,7 @@ export function weekProgress(h: Habit, today: string): WeekProgress {
 
 /** Habit has a mark (value > 0) on `date`. */
 export function isMarkedOn(h: Habit, date: string): boolean {
-  return h.entries.some((e) => e.date === date && e.value > 0);
+  return markedDates(h).has(date);
 }
 
 /**
@@ -65,7 +102,7 @@ export function isMarkedOn(h: Habit, date: string): boolean {
  * or (weekly-goal habits) its week's goal is already met.
  */
 export function isDayClosed(habits: Habit[], date: string): boolean {
-  const active = habits.filter((h) => toDateString(new Date(h.createdAt)) <= date);
+  const active = habits.filter((h) => habitStartDate(h) <= date);
   if (active.length === 0) return false;
   return active.every(
     (h) => isMarkedOn(h, date) || (h.weeklyTarget !== null && weekProgress(h, date).done >= h.weeklyTarget),

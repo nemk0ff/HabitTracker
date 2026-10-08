@@ -38,13 +38,27 @@ interface EntryHabit {
   measure: string | null;
 }
 
-/** Hours habits store minutes (0–24h); level habits store 0–4. */
+/** Hours habits store minutes (0–24h); count habits store how many (0–999); level habits store 0–4. */
 export function maxEntryValue(habit: Pick<EntryHabit, 'measure'>): number {
-  return habit.measure === 'hours' ? 1440 : 4;
+  if (habit.measure === 'hours') return 1440;
+  if (habit.measure === 'count') return 999;
+  return 4;
 }
 
 export function isValidEntryValue(habit: Pick<EntryHabit, 'measure'>, value: number): boolean {
   return Number.isInteger(value) && value >= 0 && value <= maxEntryValue(habit);
+}
+
+export interface DoneHabit {
+  measure: string | null;
+  dailyTarget: number | null;
+}
+
+/** Whether an entry value counts as "done" for the day. Count habits need value ≥ dailyTarget (min 1). */
+export function isDone(habit: DoneHabit, value: number | null | undefined): boolean {
+  if (!value || value <= 0) return false;
+  if (habit.measure === 'count') return value >= Math.max(1, habit.dailyTarget ?? 1);
+  return true;
 }
 
 /**
@@ -130,7 +144,7 @@ export interface WeekStats {
 }
 
 /**
- * Marks in the Monday week containing `date` (up to `date`). Target per habit is its
+ * Done days (see `datesByHabit`) in the Monday week containing `date` (up to `date`). Target per habit is its
  * weeklyTarget or 7; marks above the target don't count toward the total.
  */
 export function weekStats(
@@ -155,10 +169,16 @@ export function weekStats(
   };
 }
 
-/** Groups entries into habitId → set of 'YYYY-MM-DD'. */
-export function datesByHabit(entries: { habitId: number; date: Date }[]): Map<number, Set<string>> {
+/** Groups done entries (per `isDone`) into habitId → set of 'YYYY-MM-DD'. Entries of habits not in `habits` are dropped. */
+export function datesByHabit(
+  entries: { habitId: number; date: Date; value: number }[],
+  habits: ({ id: number } & DoneHabit)[],
+): Map<number, Set<string>> {
+  const byId = new Map(habits.map((h) => [h.id, h]));
   const map = new Map<number, Set<string>>();
   for (const e of entries) {
+    const habit = byId.get(e.habitId);
+    if (!habit || !isDone(habit, e.value)) continue;
     let set = map.get(e.habitId);
     if (!set) map.set(e.habitId, (set = new Set()));
     set.add(toDateString(e.date));

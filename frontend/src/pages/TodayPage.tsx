@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
@@ -11,16 +11,25 @@ import { useNutritionStore } from '../stores/nutritionStore';
 import { toast } from '../stores/toastStore';
 import { CheckinBanner } from '../components/CheckinBanner';
 import { EmptyHabits } from '../components/EmptyHabits';
-import { HabitTile } from '../components/HabitTile';
+import { TodaySection } from '../components/TodaySection';
 import { HoursSheet } from '../components/HoursSheet';
 import { WeightSheet } from '../components/nutrition/WeightSheet';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { useToday } from '../hooks/useToday';
 import { capitalizeFirst } from '../utils/dates';
 import { MACRO_COLORS, fmt, mealByTime } from '../utils/nutrition';
-import { closedDaysStreak, isDayClosed, isHoursHabit, isMarkedOn, pluralDays } from '../utils/habits';
+import {
+  TIME_OF_DAY,
+  closedDaysStreak,
+  isCountHabit,
+  isDayClosed,
+  isHoursHabit,
+  isMarkedOn,
+  pluralDays,
+  sortHabits,
+} from '../utils/habits';
 import { dismissCheckinBanner, isCheckinBannerDismissed, saveCheckinTime } from '../utils/checkin';
-import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
+import { incrementCount, setHabitValue, toggleHabitDay } from '../utils/habitActions';
 import type { Habit } from '../types';
 
 /**
@@ -45,11 +54,35 @@ export function TodayPage() {
 
   const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
   const [bannerHidden, setBannerHidden] = useState(isCheckinBannerDismissed);
-  const showBanner = habits.length > 0 && !checkinTime && !bannerHidden;
+  const active = useMemo(() => sortHabits(habits), [habits]);
+  const showBanner = active.length > 0 && !checkinTime && !bannerHidden;
 
-  const markedToday = habits.filter((h) => isMarkedOn(h, today)).length;
-  const closed = useMemo(() => isDayClosed(habits, today), [habits, today]);
-  const closedStreak = useMemo(() => (closed ? closedDaysStreak(habits, today) : 0), [closed, habits, today]);
+  const markedToday = active.filter((h) => isMarkedOn(h, today)).length;
+  const closed = useMemo(() => isDayClosed(active, today), [active, today]);
+  const closedStreak = useMemo(() => (closed ? closedDaysStreak(active, today) : 0), [closed, active, today]);
+
+  // Morning / day / evening / any time; only non-empty ones are shown.
+  const sections = useMemo(
+    () =>
+      TIME_OF_DAY.map((t) => ({ ...t, habits: active.filter((h) => (h.timeOfDay ?? null) === t.key) })).filter(
+        (s) => s.habits.length > 0,
+      ),
+    [active],
+  );
+  const doneSections = sections
+    .filter((s) => s.habits.every((h) => isMarkedOn(h, today)))
+    .map((s) => s.key ?? 'any')
+    .join(',');
+
+  // Success haptic when a section or the whole day becomes done (not on first render).
+  const prevDone = useRef<{ sections: string; closed: boolean; date: string } | null>(null);
+  useEffect(() => {
+    const prev = prevDone.current;
+    prevDone.current = { sections: doneSections, closed, date: today };
+    if (!prev || prev.date !== today) return;
+    const newSection = doneSections.split(',').some((k) => k && !prev.sections.split(',').includes(k));
+    if (newSection || (closed && !prev.closed)) haptic('success');
+  }, [doneSections, closed, today]);
 
   useBackButton(null);
   useMainButton(null, () => {});
@@ -74,10 +107,24 @@ export function TodayPage() {
 
   // Stable callbacks so memoized tiles re-render only when their own habit changes.
   const tapHabit = useCallback(
-    (h: Habit) => (isHoursHabit(h) ? setHoursHabitId(h.id) : toggleHabitDay(h, today)),
+    (h: Habit) =>
+      isHoursHabit(h) ? setHoursHabitId(h.id) : isCountHabit(h) ? incrementCount(h, today) : toggleHabitDay(h, today),
     [today],
   );
   const openHabit = useCallback((id: number) => navigate('habit', { selectedHabitId: id }), [navigate]);
+
+  const addTile = (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.95 }}
+      onClick={() => navigate('create')}
+      className="aspect-square rounded-2xl p-3 flex flex-col items-center justify-center gap-1.5 text-tg-hint"
+      style={{ boxShadow: 'inset 0 0 0 1.5px color-mix(in srgb, var(--tg-theme-hint-color) 45%, transparent)' }}
+    >
+      <Plus size={24} aria-hidden />
+      <span className="text-sm font-medium">Добавить</span>
+    </motion.button>
+  );
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="scrollable">
@@ -87,7 +134,7 @@ export function TodayPage() {
             <h1 className="text-xl font-semibold text-tg-text pt-2">
               {capitalizeFirst(format(parseISO(today), 'EEEE, d MMMM', { locale: ru }))}
             </h1>
-            {habits.length > 0 && (
+            {active.length > 0 && (
               <div className="mt-2">
                 <div className="flex items-baseline gap-2">
                   {/* The habits count is the screen's big number unless the kcal block already holds that role. */}
@@ -95,7 +142,7 @@ export function TodayPage() {
                     className={nutrition ? 'text-2xl font-semibold leading-none' : 'font-display text-[36px] leading-none'}
                     style={{ color: closed ? 'var(--accent)' : 'var(--tg-theme-text-color)' }}
                   >
-                    {markedToday} из {habits.length}
+                    {markedToday} из {active.length}
                   </span>
                   <span className="text-sm text-tg-hint">сегодня</span>
                 </div>
@@ -226,24 +273,21 @@ export function TodayPage() {
           </button>
         </div>
 
-        {habits.length === 0 ? (
+        {active.length === 0 ? (
           <EmptyHabits onPickMore={() => navigate('onboarding')} />
         ) : (
-          <div className="grid grid-cols-3 gap-2">
-            {habits.map((h) => (
-              <HabitTile key={h.id} habit={h} date={today} onTap={tapHabit} onOpen={openHabit} />
-            ))}
-            <motion.button
-              type="button"
-              whileTap={{ scale: 0.95 }}
-              onClick={() => navigate('create')}
-              className="aspect-square rounded-2xl p-3 flex flex-col items-center justify-center gap-1.5 text-tg-hint"
-              style={{ boxShadow: 'inset 0 0 0 1.5px color-mix(in srgb, var(--tg-theme-hint-color) 45%, transparent)' }}
-            >
-              <Plus size={24} aria-hidden />
-              <span className="text-sm font-medium">Добавить</span>
-            </motion.button>
-          </div>
+          sections.map((s, i) => (
+            <TodaySection
+              key={s.key ?? 'any'}
+              label={s.label}
+              habits={s.habits}
+              date={today}
+              showHeader={sections.length > 1}
+              onTap={tapHabit}
+              onOpen={openHabit}
+              trailing={i === sections.length - 1 ? addTile : undefined}
+            />
+          ))
         )}
       </div>
 

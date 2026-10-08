@@ -11,6 +11,7 @@
  */
 import { prisma } from '../../db.js';
 import { pluralForm } from '../../utils/plural.js';
+import { isDone } from '../habitStats.js';
 
 export const KCAL_PER_KG = 7700;
 const EMA_ALPHA = 0.1;
@@ -97,9 +98,14 @@ export function weightTrend(weights: { date: string; weightKg: number }[], until
 export async function computePlan(userId: number, date: string): Promise<Plan & { trend: TrendPoint[] }> {
   const windowStart = addDays(date, -WINDOW_DAYS);
   const goal = await prisma.nutritionGoal.findUnique({ where: { userId } });
-  const trainingHabitCreated = goal?.trainingHabitId
-    ? ((await prisma.habit.findFirst({ where: { id: goal.trainingHabitId, userId }, select: { createdAt: true } }))?.createdAt ?? null)
+  // Archived habits still count here — the history stays valid for the model.
+  const trainingHabit = goal?.trainingHabitId
+    ? await prisma.habit.findFirst({
+        where: { id: goal.trainingHabitId, userId },
+        select: { createdAt: true, measure: true, dailyTarget: true },
+      })
     : null;
+  const trainingHabitCreated = trainingHabit?.createdAt ?? null;
 
   const [weightsRaw, days, training, sleep, marks] = await Promise.all([
     prisma.weightEntry.findMany({ where: { userId, date: { lte: parseDay(date) } }, orderBy: { date: 'asc' } }),
@@ -161,7 +167,7 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
   }
 
   // ─── Training frequency ────────────────────────────────────────────────────
-  const trainingDates = new Set(training.filter((e) => e.value > 0).map((e) => day(e.date)));
+  const trainingDates = new Set(training.filter((e) => trainingHabit != null && isDone(trainingHabit, e.value)).map((e) => day(e.date)));
   const isTrainingDay = trainingDates.has(date);
   const trainingsPerWeek = goal?.trainingHabitId
     ? Math.round(([...trainingDates].filter((d) => d >= addDays(date, -21) && d <= date).length / 3) * 10) / 10

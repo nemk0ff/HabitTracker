@@ -26,15 +26,14 @@ interface Props {
   entries: HabitEntry[];
   color: string;
   binary?: boolean;
-  onToggle?: (date: string, value: number) => void;
-  /** Select mode: a tap reports the day instead of cycling its intensity. */
-  onSelect?: (date: string) => void;
+  /** A tap reports the day; the caller decides how to edit it (day sheet). */
+  onSelect: (date: string) => void;
   selectedDate?: string;
   /** Screen-reader names for levels 1–3 (default: легко / средне / тяжело). */
   levelLabels?: string[];
 }
 
-export function Heatmap({ entries, color, binary = false, onToggle, onSelect, selectedDate, levelLabels = DEFAULT_LEVEL_LABELS }: Props) {
+export function Heatmap({ entries, color, binary = false, onSelect, selectedDate, levelLabels = DEFAULT_LEVEL_LABELS }: Props) {
   const today = new Date();
   const initial = selectedDate ? new Date(selectedDate + 'T00:00:00') : today;
   const [year, setYear] = useState(initial.getFullYear());
@@ -71,15 +70,8 @@ export function Heatmap({ entries, color, binary = false, onToggle, onSelect, se
   }, [month]);
 
   const handleCellTap = (dateStr: string) => {
-    if (onSelect) {
-      onSelect(dateStr);
-      window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
-      return;
-    }
-    const current = entryMap.get(dateStr) ?? 0;
-    const next = binary ? (current > 0 ? 0 : 1) : (current >= 3 ? 0 : current + 1);
-    onToggle?.(dateStr, next);
-    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
+    onSelect(dateStr);
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
   };
 
   const isFutureMonth = new Date(year, month) > today;
@@ -160,7 +152,7 @@ export function Heatmap({ entries, color, binary = false, onToggle, onSelect, se
                     disabled={isFuture}
                     aria-label={label}
                     aria-current={isTodayCell ? 'date' : undefined}
-                    aria-pressed={onSelect && selectedDate !== undefined ? isSelected : undefined}
+                    aria-pressed={selectedDate !== undefined ? isSelected : undefined}
                     className="aspect-square rounded-lg flex items-center justify-center text-xs font-medium transition-colors disabled:opacity-30 relative focus-ring"
                     style={{ backgroundColor: bg }}
                   >

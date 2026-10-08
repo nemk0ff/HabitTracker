@@ -1,38 +1,96 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Check } from 'lucide-react';
+import { Check, Minus, Plus } from 'lucide-react';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { ColorPicker } from '../components/ColorPicker';
 import { EmojiPicker } from '../components/EmojiPicker';
 import { HABIT_COLORS, readableOn } from '../utils/colors';
 import { HABIT_TEMPLATES, type HabitTemplate } from '../utils/habitTemplates';
+import { TIME_OF_DAY } from '../utils/habits';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
+import type { Habit, TimeOfDay } from '../types';
+
+/** What a day records. Measure kinds ('hours' / 'count') are fixed after creation — entries aren't converted. */
+type Kind = 'check' | 'levels' | 'count' | 'hours';
+
+const KINDS: { key: Kind; title: string; hint: string }[] = [
+  { key: 'check', title: 'Галочка', hint: 'Сделал или нет' },
+  { key: 'levels', title: 'С оценкой', hint: 'Легко · средне · тяжело' },
+  { key: 'count', title: 'Количество', hint: 'Например, 8 стаканов воды за день' },
+  { key: 'hours', title: 'Часы (сон)', hint: 'Сколько часов, с точностью до получаса' },
+];
+
+const DEFAULT_DAILY_TARGET = 8;
+
+function kindOf(h: Pick<Habit, 'measure' | 'binary'>): Kind {
+  if (h.measure === 'hours') return 'hours';
+  if (h.measure === 'count') return 'count';
+  return h.binary ? 'check' : 'levels';
+}
+
+const clampTarget = (n: number) => Math.min(99, Math.max(1, Math.round(n) || 1));
+const normName = (s: string) => s.trim().toLocaleLowerCase('ru');
 
 export function HabitFormPage() {
-  const { habits, addHabit, editHabit } = useHabitsStore();
-  const { screen, selectedHabitId, navigate } = useNavStore();
+  const habits = useHabitsStore((s) => s.habits);
+  const addHabit = useHabitsStore((s) => s.addHabit);
+  const editHabit = useHabitsStore((s) => s.editHabit);
+  const screen = useNavStore((s) => s.screen);
+  const selectedHabitId = useNavStore((s) => s.selectedHabitId);
+  const navigate = useNavStore((s) => s.navigate);
+  const back = useNavStore((s) => s.back);
   const isEdit = screen === 'edit';
   const existing = isEdit ? habits.find((h) => h.id === selectedHabitId) : null;
 
   const [name, setName] = useState(existing?.name || '');
   const [color, setColor] = useState(existing?.color || HABIT_COLORS[0]!);
   const [icon, setIcon] = useState<string | null>(existing?.icon || null);
-  const [binary, setBinary] = useState(existing?.binary ?? true); // new habits default to the simple check
-  // Hours habits store minutes; the kind is chosen on creation only (entries aren't converted).
-  const [hours, setHours] = useState(existing?.measure === 'hours');
+  // New habits default to the simple check.
+  const [kind, setKind] = useState<Kind>(existing ? kindOf(existing) : 'check');
+  const [dailyTarget, setDailyTarget] = useState(existing?.dailyTarget ?? DEFAULT_DAILY_TARGET);
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay | null>(existing?.timeOfDay ?? null);
   const [weeklyTarget, setWeeklyTarget] = useState<number | null>(existing?.weeklyTarget ?? null);
   const [saving, setSaving] = useState(false);
   const [templateKey, setTemplateKey] = useState<string | null>(null);
+
+  const count = kind === 'count';
+  // The frequency goal applies to check / levels habits only.
+  const hasFrequency = kind === 'check' || kind === 'levels';
+  // Editing can't switch measure kinds; check ↔ levels stays possible.
+  const kinds = isEdit ? KINDS.filter((k) => k.key === kind || (hasFrequency && (k.key === 'check' || k.key === 'levels'))) : KINDS;
+
+  // Same name already in the list (case-insensitive) — a hint, not a block.
+  const duplicate = useMemo(() => {
+    const n = normName(name);
+    if (!n) return null;
+    return habits.find((h) => !h.archived && h.id !== existing?.id && normName(h.name) === n) ?? null;
+  }, [name, habits, existing?.id]);
 
   const save = async () => {
     if (!name.trim() || saving) return;
     setSaving(true);
     try {
+      const common = {
+        name: name.trim(),
+        color,
+        icon: icon || undefined,
+        timeOfDay,
+        weeklyTarget: hasFrequency ? weeklyTarget : null,
+      };
       const ok =
         isEdit && selectedHabitId
-          ? await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary, weeklyTarget: hours ? null : weeklyTarget })
-          : await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null, weeklyTarget: hours ? null : weeklyTarget });
+          ? await editHabit(selectedHabitId, {
+              ...common,
+              ...(hasFrequency ? { binary: kind === 'check' } : {}),
+              ...(count ? { dailyTarget: clampTarget(dailyTarget) } : {}),
+            })
+          : await addHabit({
+              ...common,
+              binary: kind === 'check',
+              measure: kind === 'hours' ? 'hours' : count ? 'count' : null,
+              dailyTarget: count ? clampTarget(dailyTarget) : null,
+            });
       // On failure stay here so the input isn't lost; the Toaster shows the store error.
       if (!ok) {
         haptic('error');
@@ -51,14 +109,16 @@ export function HabitFormPage() {
     setName(t.name);
     setIcon(t.icon);
     setColor(t.color);
-    setHours(t.measure === 'hours');
-    setBinary(t.binary);
+    setKind(kindOf(t));
+    if (t.dailyTarget) setDailyTarget(t.dailyTarget);
     setWeeklyTarget(t.weeklyTarget);
+    setTimeOfDay(t.timeOfDay);
   };
 
-  const back = useNavStore((s) => s.back);
   useBackButton(back);
   useMainButton(name.trim() ? (isEdit ? 'Сохранить' : 'Создать') : null, save, { progress: saving });
+
+  const selectedStyle = { backgroundColor: color, color: readableOn(color) };
 
   return (
     <motion.div
@@ -104,10 +164,11 @@ export function HabitFormPage() {
 
         {/* Name */}
         <div className="mb-6">
-          <label className="block text-sm font-semibold text-tg-text mb-2">
+          <label htmlFor="habit-name" className="block text-sm font-semibold text-tg-text mb-2">
             Название
           </label>
           <input
+            id="habit-name"
             type="text"
             value={name}
             onChange={(e) => {
@@ -117,8 +178,41 @@ export function HabitFormPage() {
             placeholder="Например: Медитация"
             maxLength={30}
             autoFocus={isEdit}
+            aria-describedby="habit-name-dup"
             className="w-full px-4 py-3 rounded-xl bg-tg-section text-tg-text placeholder:text-tg-hint text-base outline-none focus:ring-2 focus:ring-tg-button/30 transition-shadow"
           />
+          <p id="habit-name-dup" aria-live="polite" className="text-sm text-hint-strong px-1 empty:hidden mt-1.5">
+            {duplicate ? `У тебя уже есть «${duplicate.name}»` : ''}
+          </p>
+        </div>
+
+        {/* When: the section on Today */}
+        <div className="mb-6">
+          <p id="time-of-day-label" className="block text-sm font-semibold text-tg-text mb-2">
+            Когда
+          </p>
+          <div
+            className="grid grid-cols-[1fr_1fr_1fr_1.7fr] gap-1 bg-tg-section rounded-xl p-1"
+            role="radiogroup"
+            aria-labelledby="time-of-day-label"
+          >
+            {TIME_OF_DAY.map(({ key, label }) => {
+              const on = timeOfDay === key;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setTimeOfDay(key)}
+                  className="min-h-[44px] px-1 rounded-lg text-sm font-medium leading-tight transition-colors"
+                  style={on ? selectedStyle : { color: 'var(--tg-theme-text-color)' }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Color */}
@@ -141,74 +235,79 @@ export function HabitFormPage() {
           </div>
         </div>
 
-        {/* Kind: hours (create only) */}
-        {!isEdit && (
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-tg-text mb-2">
-              Что отмечаем
-            </label>
-            <div className="flex bg-tg-section rounded-xl p-1">
-              {(
-                [
-                  [false, 'Выполнение'],
-                  [true, 'Часы (сон)'],
-                ] as const
-              ).map(([value, label]) => (
+        {/* What a day records */}
+        <div className="mb-6">
+          <p id="kind-label" className="block text-sm font-semibold text-tg-text mb-2">
+            Как отмечать
+          </p>
+          <div className="flex flex-col gap-2" role="radiogroup" aria-labelledby="kind-label">
+            {kinds.map(({ key, title, hint }) => {
+              const on = kind === key;
+              return (
                 <button
-                  key={label}
+                  key={key}
                   type="button"
-                  onClick={() => setHours(value)}
-                  className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={hours === value ? { backgroundColor: color, color: readableOn(color) } : { color: 'var(--tg-theme-text-color)' }}
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setKind(key)}
+                  className="w-full min-h-[56px] px-4 py-2.5 rounded-2xl bg-tg-section flex items-center justify-between gap-3 text-left transition-shadow"
+                  style={{ boxShadow: on ? `inset 0 0 0 2px ${color}` : undefined }}
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* How a day is marked: a plain check or a check with an effort level */}
-        {!hours && (
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-tg-text mb-2">Как отмечать</label>
-            <div className="flex flex-col gap-2" role="radiogroup" aria-label="Как отмечать">
-              {(
-                [
-                  [true, 'Просто галочка', 'Сделал или нет'],
-                  [false, 'С оценкой', 'Легко · средне · тяжело'],
-                ] as const
-              ).map(([value, title, hint]) => {
-                const on = binary === value;
-                return (
-                  <button
-                    key={title}
-                    type="button"
-                    role="radio"
-                    aria-checked={on}
-                    onClick={() => setBinary(value)}
-                    className="w-full min-h-[56px] px-4 py-2.5 rounded-2xl bg-tg-section flex items-center justify-between gap-3 text-left transition-shadow"
-                    style={{ boxShadow: on ? `inset 0 0 0 2px ${color}` : undefined }}
+                  <span>
+                    <span className="block text-sm font-medium text-tg-text">{title}</span>
+                    <span className="block text-xs text-tg-hint mt-0.5">{hint}</span>
+                  </span>
+                  <span
+                    className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+                    style={on ? selectedStyle : { boxShadow: 'inset 0 0 0 1.5px var(--tg-theme-hint-color)' }}
                   >
-                    <span>
-                      <span className="block text-sm font-medium text-tg-text">{title}</span>
-                      <span className="block text-xs text-tg-hint mt-0.5">{hint}</span>
-                    </span>
-                    <span
-                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
-                      style={on ? { backgroundColor: color, color: readableOn(color) } :{ boxShadow: 'inset 0 0 0 1.5px var(--tg-theme-hint-color)' }}
-                    >
-                      {on && <Check size={14} aria-hidden />}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                    {on && <Check size={14} aria-hidden />}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-        )}
+
+          {count && (
+            <div className="mt-2 bg-tg-section rounded-2xl pl-4 pr-2 py-2 flex items-center gap-2">
+              <span id="daily-target-label" className="flex-1 text-sm font-medium text-tg-text">
+                Цель в день
+              </span>
+              <button
+                type="button"
+                onClick={() => setDailyTarget((n) => clampTarget(n - 1))}
+                disabled={dailyTarget <= 1}
+                aria-label="Меньше"
+                className="w-11 h-11 rounded-xl bg-tg-secondary text-tg-text flex items-center justify-center disabled:opacity-30 active:opacity-70"
+              >
+                <Minus size={18} aria-hidden />
+              </button>
+              <input
+                type="text"
+                inputMode="numeric"
+                aria-labelledby="daily-target-label"
+                value={dailyTarget}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, '').slice(-2);
+                  setDailyTarget(digits ? clampTarget(Number(digits)) : 1);
+                }}
+                className="w-12 text-center font-display text-xl text-tg-text bg-transparent outline-none focus-ring rounded-lg"
+              />
+              <button
+                type="button"
+                onClick={() => setDailyTarget((n) => clampTarget(n + 1))}
+                disabled={dailyTarget >= 99}
+                aria-label="Больше"
+                className="w-11 h-11 rounded-xl bg-tg-secondary text-tg-text flex items-center justify-center disabled:opacity-30 active:opacity-70"
+              >
+                <Plus size={18} aria-hidden />
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Frequency goal: daily or N times a week (drives the weekly progress instead of a daily streak) */}
-        {!hours && (
+        {hasFrequency && (
           <div className="mb-6">
             <label className="block text-sm font-semibold text-tg-text mb-2">
               Как часто
@@ -225,7 +324,7 @@ export function HabitFormPage() {
                     className="flex-1 min-h-[44px] rounded-xl text-base font-semibold transition-colors"
                     style={
                       weeklyTarget === n
-                        ? { backgroundColor: color, color: readableOn(color) }
+                        ? selectedStyle
                         : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
                     }
                   >
@@ -240,7 +339,7 @@ export function HabitFormPage() {
                   className="flex-[2] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
                   style={
                     weeklyTarget === null
-                      ? { backgroundColor: color, color: readableOn(color) }
+                      ? selectedStyle
                       : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
                   }
                 >
@@ -250,7 +349,7 @@ export function HabitFormPage() {
               <p className="text-sm text-tg-hint mt-2 px-1">
                 {weeklyTarget === null
                   ? 'Серия считается по дням подряд'
-                  : `${weeklyTarget} ${weeklyTarget === 1 ? 'раз' : weeklyTarget < 5 ? 'раза' : 'раз'} в неделю — прогресс и серия считаются по неделям`}
+                  : `${weeklyTarget} ${weeklyTarget >= 2 && weeklyTarget <= 4 ? 'раза' : 'раз'} в неделю — прогресс и серия считаются по неделям`}
               </p>
             </div>
           </div>

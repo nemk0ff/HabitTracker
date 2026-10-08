@@ -113,6 +113,11 @@ export function getRecentDays(count: number): Date[] {
   return days;
 }
 
+/**
+ * Current and best run of consecutive marked days. Callers pass only the entries that count
+ * as done (`isDoneValue`) — e.g. a count habit's 3/8 day must be filtered out beforehand, since
+ * here any `value > 0` is a mark. Today not marked yet doesn't break the current run.
+ */
 export function calculateStreak(
   entries: { date: string; value: number }[],
 ): { current: number; best: number } {
@@ -145,8 +150,9 @@ export function calculateStreak(
     if (i === 0) {
       streak = 1;
     } else {
-      const prev = new Date(sortedDates[i - 1]!);
-      const curr = new Date(sortedDates[i]!);
+      // parseISO = local midnight (new Date('YYYY-MM-DD') is UTC and can shift across DST).
+      const prev = parseISO(sortedDates[i - 1]!);
+      const curr = parseISO(sortedDates[i]!);
       if (differenceInCalendarDays(curr, prev) === 1) {
         streak++;
       } else {

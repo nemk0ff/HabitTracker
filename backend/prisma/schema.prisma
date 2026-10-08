@@ -58,10 +58,17 @@ model Habit {
   createdAt DateTime     @default(now())
   archived  Boolean      @default(false)
   binary    Boolean      @default(false)
-  /// null = intensity levels 1-4 (or done/not done when binary); "hours" = entry value is minutes
+  /// null = intensity levels 1-4 (or done/not done when binary); "hours" = entry value is minutes;
+  /// "count" = entry value is how many (0-999), done when value >= dailyTarget
   measure   String?
   /// null = every day; 1-6 = N times a week (frequency goal, drives weekly progress)
   weeklyTarget Int?
+  /// "morning" | "day" | "evening"; null = any time (section on the Today screen, check-in order)
+  timeOfDay String?
+  /// count habits only: how many per day makes the day done (1-99)
+  dailyTarget Int?
+  /// manual order (ascending), then createdAt
+  sortOrder Int          @default(0)
   entries   HabitEntry[]
   reminder  Reminder?
 

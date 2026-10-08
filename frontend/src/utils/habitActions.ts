@@ -2,21 +2,39 @@ import { useHabitsStore } from '../stores/habitsStore';
 import { useAuthStore } from '../stores/authStore';
 import { toast, type ToastAction } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
-import { formatHours, isHoursHabit } from './habits';
+import { formatHours, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn } from './habits';
 import type { Habit } from '../types';
 
 export const INTENSITY_LABELS = ['Легко', 'Средне', 'Тяжело'] as const;
 
-/** Habits whose marks carry an intensity (not done/not-done, not hours). */
+/** Count entries are capped server-side. */
+export const MAX_COUNT = 999;
+
+/** Habits whose marks carry an intensity (not done/not-done, not hours, not count). */
 export function hasIntensity(h: Habit): boolean {
-  return !h.binary && !isHoursHabit(h);
+  return !h.binary && !isHoursHabit(h) && !isCountHabit(h);
+}
+
+/** Daily target of a count habit (at least 1). */
+export function countTarget(h: Pick<Habit, 'dailyTarget'>): number {
+  return Math.max(1, h.dailyTarget ?? 1);
+}
+
+function valueOn(habit: Habit, date: string): number {
+  return habit.entries.find((e) => e.date === date)?.value ?? 0;
 }
 
 function describe(habit: Habit, value: number): string {
   if (value === 0) return `«${habit.name}»: отметка снята`;
   if (isHoursHabit(habit)) return `«${habit.name}»: ${formatHours(value)}`;
+  if (isCountHabit(habit)) return `${habit.name}: ${value} из ${countTarget(habit)}`;
   if (hasIntensity(habit)) return `«${habit.name}»: ${INTENSITY_LABELS[Math.min(value, 3) - 1]!.toLowerCase()}`;
   return `«${habit.name}»: отмечено`;
+}
+
+/** No habit has a single done day yet (checked before the optimistic update). */
+function noMarksYet(habits: Habit[]): boolean {
+  return habits.every((h) => !h.entries.some((e) => isDoneValue(h, e.value)));
 }
 
 /**
@@ -26,10 +44,9 @@ function describe(habit: Habit, value: number): string {
  */
 export function setHabitValue(habit: Habit, date: string, value: number, { askIntensity = true } = {}) {
   const { toggleEntry, habits } = useHabitsStore.getState();
-  const prev = habit.entries.find((e) => e.date === date)?.value ?? 0;
+  const prev = valueOn(habit, date);
   if (prev === value) return;
-  // Checked before the optimistic update: no marks at all across every habit → this is the first one.
-  const firstEver = value > 0 && habits.every((h) => !h.entries.some((e) => e.value > 0));
+  const firstEver = isDoneValue(habit, value) && noMarksYet(habits);
   toggleEntry(habit.id, date, value);
   haptic(value > 0 ? 'light' : 'select');
 
@@ -62,6 +79,42 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
 
 /** One-tap check / uncheck for the day (hours habits need a value — use the hours sheet instead). */
 export function toggleHabitDay(habit: Habit, date: string) {
-  const done = habit.entries.some((e) => e.date === date && e.value > 0);
-  setHabitValue(habit, date, done ? 0 : 1);
+  if (isCountHabit(habit)) {
+    setHabitValue(habit, date, isMarkedOn(habit, date) ? 0 : countTarget(habit));
+    return;
+  }
+  setHabitValue(habit, date, isMarkedOn(habit, date) ? 0 : 1);
+}
+
+/** Count habits: one more (a glass of water, a pill) — toast «Вода: 3 из 8» with "Отменить". */
+export function incrementCount(habit: Habit, date: string) {
+  const prev = valueOn(habit, date);
+  if (prev >= MAX_COUNT) return;
+  setHabitValue(habit, date, prev + 1);
+}
+
+/**
+ * Marks every not-done habit of a group at once (binary/levels → 1, count → its target;
+ * hours habits are skipped — they need a value). One toast undoes the whole batch.
+ */
+export function markAll(habits: Habit[], date: string, label: string) {
+  const { toggleEntry } = useHabitsStore.getState();
+  const batch = habits
+    .filter((h) => !isHoursHabit(h) && !isMarkedOn(h, date))
+    .map((h) => ({ id: h.id, prev: valueOn(h, date), next: isCountHabit(h) ? countTarget(h) : 1 }));
+  if (batch.length === 0) return;
+  for (const b of batch) toggleEntry(b.id, date, b.next);
+  haptic('light');
+  toast(`${label}: отмечено ${batch.length}`, {
+    actions: [
+      {
+        label: 'Отменить',
+        onClick: () => {
+          for (const b of batch) toggleEntry(b.id, date, b.prev);
+          haptic('select');
+        },
+      },
+    ],
+    ms: 5000,
+  });
 }

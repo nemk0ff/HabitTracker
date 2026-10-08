@@ -10,8 +10,12 @@ interface HabitsState {
   error: string | null;
 
   load: () => Promise<void>;
-  addHabit: (data: { name: string; color?: string; icon?: string; binary?: boolean; measure?: 'hours' | null; weeklyTarget?: number | null }) => Promise<boolean>;
-  editHabit: (id: number, data: { name?: string; color?: string; icon?: string; binary?: boolean; weeklyTarget?: number | null }) => Promise<boolean>;
+  addHabit: (data: habitsApi.CreateHabitData) => Promise<boolean>;
+  editHabit: (id: number, data: habitsApi.UpdateHabitData) => Promise<boolean>;
+  /** Manual order of the active habits, top to bottom (optimistic; re-syncs on error). */
+  reorder: (ids: number[]) => Promise<void>;
+  /** Archive / restore (optimistic; rolls back on error). */
+  setArchived: (id: number, archived: boolean) => Promise<boolean>;
   removeHabit: (id: number) => Promise<void>;
   toggleEntry: (habitId: number, date: string, value: number) => Promise<void>;
 }
@@ -52,7 +56,12 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
   addHabit: async (data) => {
     try {
       const habit = await habitsApi.createHabit(data);
-      set((s) => ({ habits: [...s.habits, habit] }));
+      // The server returns the existing habit for a double-tap — don't list it twice.
+      set((s) => ({
+        habits: s.habits.some((h) => h.id === habit.id)
+          ? s.habits.map((h) => (h.id === habit.id ? { ...h, ...habit } : h))
+          : [...s.habits, habit],
+      }));
       return true;
     } catch (e: any) {
       set({ error: e.message });
@@ -65,12 +74,42 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
       const updated = await habitsApi.updateHabit(id, data);
       set((s) => ({
         habits: s.habits.map((h) =>
-          h.id === id ? { ...h, ...updated } : h,
+          h.id === id ? { ...h, ...updated, entries: updated.entries ?? h.entries } : h,
         ),
       }));
       return true;
     } catch (e: any) {
       set({ error: e.message });
+      return false;
+    }
+  },
+
+  reorder: async (ids) => {
+    const order = new Map(ids.map((id, i) => [id, i]));
+    set((s) => ({
+      habits: s.habits.map((h) => (order.has(h.id) ? { ...h, sortOrder: order.get(h.id)! } : h)),
+    }));
+    try {
+      await habitsApi.reorderHabits(ids);
+    } catch (e: any) {
+      set({ error: e.message });
+      void get().load();
+    }
+  },
+
+  setArchived: async (id, archived) => {
+    const prev = get().habits.find((h) => h.id === id);
+    if (!prev) return false;
+    set((s) => ({ habits: s.habits.map((h) => (h.id === id ? { ...h, archived } : h)) }));
+    try {
+      const updated = await habitsApi.updateHabit(id, { archived });
+      // Keep the loaded entries if the PATCH response doesn't carry them.
+      set((s) => ({
+        habits: s.habits.map((h) => (h.id === id ? { ...h, ...updated, entries: updated.entries ?? h.entries } : h)),
+      }));
+      return true;
+    } catch (e: any) {
+      set((s) => ({ habits: s.habits.map((h) => (h.id === id ? { ...h, archived: prev.archived } : h)), error: e.message }));
       return false;
     }
   },

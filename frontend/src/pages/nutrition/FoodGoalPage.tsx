@@ -5,7 +5,7 @@ import { ru } from 'date-fns/locale';
 import { useNavStore } from '../../stores/navStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
 import { useHabitsStore } from '../../stores/habitsStore';
-import { isHoursHabit } from '../../utils/habits';
+import { isCountHabit, isHoursHabit } from '../../utils/habits';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { deleteWeight, fetchStats, saveWeight } from '../../api/nutrition';
 import { toDateString } from '../../utils/dates';
@@ -45,7 +45,8 @@ const str = (n: number | null | undefined) => (n === null || n === undefined ? '
 export function FoodGoalPage() {
   const back = useNavStore((s) => s.back);
   const { goal, goalLoaded, loadGoal, setGoal } = useNutritionStore();
-  const habits = useHabitsStore((s) => s.habits);
+  const allHabits = useHabitsStore((s) => s.habits);
+
   const today = toDateString(new Date());
 
   const [kcal, setKcal] = useState('');
@@ -290,13 +291,13 @@ export function FoodGoalPage() {
           </p>
           <HabitPicker
             label="💪 Тренировки"
-            habits={habits.filter((h) => !isHoursHabit(h))}
+            habits={pickable(allHabits, trainingHabitId, (h) => !isHoursHabit(h) && !isCountHabit(h))}
             value={trainingHabitId}
             onChange={setTrainingHabitId}
           />
           <HabitPicker
             label="😴 Сон (часы)"
-            habits={habits.filter(isHoursHabit)}
+            habits={pickable(allHabits, sleepHabitId, isHoursHabit)}
             value={sleepHabitId}
             onChange={setSleepHabitId}
             empty="Нет привычки с типом «Часы» — создай её в трекере привычек"
@@ -341,6 +342,11 @@ function Num({ label, value, onChange, secondary }: { label: string; value: stri
   );
 }
 
+/** Active habits of the right kind, plus the currently linked one even if archived (so it can be unlinked). */
+function pickable(all: Habit[], linkedId: number | null, kind: (h: Habit) => boolean): Habit[] {
+  return all.filter((h) => kind(h) && (!h.archived || h.id === linkedId));
+}
+
 function HabitPicker({
   label,
   habits,
@@ -374,6 +380,7 @@ function HabitPicker({
             >
               {h.icon ? `${h.icon} ` : ''}
               {h.name}
+              {'archived' in h && h.archived ? ' (в архиве)' : ''}
             </button>
           ))}
         </div>

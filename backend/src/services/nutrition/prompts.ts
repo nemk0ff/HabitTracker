@@ -15,6 +15,7 @@ import { hasNutritionAccess } from '../../utils/features.js';
 import { forEachSafe } from '../../utils/safe.js';
 import { track } from '../analytics.js';
 import { computePlan } from './model.js';
+import { isDone } from '../habitStats.js';
 
 const WEBAPP_URL = process.env.WEBAPP_URL || '';
 const SLEEP_HOURS = [5, 6, 7, 8, 9];
@@ -75,8 +76,11 @@ const openDiaryRow = (): Button[] => (WEBAPP_URL ? [{ text: '📱 Открыть
 export async function sendMorningPrompts(): Promise<void> {
   const date = todayMsk();
   await forEachRecipient('morning', async (g) => {
-    if (g.sleepHabitId) {
-      const slept = await prisma.habitEntry.findFirst({ where: { habitId: g.sleepHabitId, date: dayDate(date) } });
+    const sleepHabit = g.sleepHabitId
+      ? await prisma.habit.findFirst({ where: { id: g.sleepHabitId, userId: g.userId, archived: false }, select: { id: true } })
+      : null;
+    if (sleepHabit) {
+      const slept = await prisma.habitEntry.findFirst({ where: { habitId: sleepHabit.id, date: dayDate(date) } });
       if (!slept) {
         await send(g.user.telegramId, '😴 Сколько спал этой ночью?', [
           SLEEP_HOURS.map((h) => ({ text: `${h} ч`, callback_data: `sl:${date}:${h * 60}` })),
@@ -104,8 +108,10 @@ export async function sendTrainingPrompt(): Promise<void> {
   await forEachRecipient('training', async (g) => {
     // The evening check-in already asks about every habit, training included.
     if (!g.trainingHabitId || g.user.checkinTime) return;
-    const done = await prisma.habitEntry.findFirst({ where: { habitId: g.trainingHabitId, date: dayDate(date) } });
-    if (done) return;
+    const habit = await prisma.habit.findFirst({ where: { id: g.trainingHabitId, userId: g.userId, archived: false } });
+    if (!habit) return; // archived (or gone) — don't ask about a habit the user put away
+    const entry = await prisma.habitEntry.findFirst({ where: { habitId: habit.id, date: dayDate(date) } });
+    if (isDone(habit, entry?.value)) return;
     await send(g.user.telegramId, '💪 Была сегодня тренировка?', [
       [
         { text: 'Да', callback_data: `tr:${date}:1` },
@@ -199,10 +205,16 @@ export async function handlePromptCallback(ctx: Context, data: string): Promise<
   }
   if (kind === 'tr' && goal?.trainingHabitId) {
     if (value === '1') {
+      const habit = await prisma.habit.findFirst({ where: { id: goal.trainingHabitId, userId: user.id } });
+      if (!habit) return reject('Привычка не найдена');
+      // «Да» means the training happened: a count habit gets its daily target, so it counts as done.
+      const existing = await prisma.habitEntry.findUnique({ where: { habitId_date: { habitId: habit.id, date: d } } });
+      const doneValue = habit.measure === 'count' ? Math.max(1, habit.dailyTarget ?? 1) : 1;
+      const newValue = isDone(habit, existing?.value) ? existing!.value : doneValue;
       await prisma.habitEntry.upsert({
-        where: { habitId_date: { habitId: goal.trainingHabitId, date: d } },
-        update: { value: 1 },
-        create: { habitId: goal.trainingHabitId, date: d, value: 1 },
+        where: { habitId_date: { habitId: habit.id, date: d } },
+        update: { value: newValue },
+        create: { habitId: habit.id, date: d, value: newValue },
       });
       track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { prompt: 'training' } });
       return { text: '💪 Отметил тренировку' };

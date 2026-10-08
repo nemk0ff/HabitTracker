@@ -4,16 +4,25 @@ export interface HabitEntry {
   value: number; // 0-3
 }
 
+export type TimeOfDay = 'morning' | 'day' | 'evening';
+
 export interface Habit {
   id: number;
   name: string;
   color: string;
   icon: string | null;
   binary: boolean;
-  /** null = intensity levels; 'hours' = entry value is minutes. */
-  measure: 'hours' | null;
+  /** null = intensity levels; 'hours' = entry value is minutes; 'count' = value is how many (vs dailyTarget). */
+  measure: 'hours' | 'count' | null;
   /** null = every day; 1–6 = N times a week. */
   weeklyTarget: number | null;
+  /** Section on the Today screen; null = «В любое время». */
+  timeOfDay: TimeOfDay | null;
+  /** Count habits: how many per day makes the day done (e.g. 8 glasses). Null for other kinds. */
+  dailyTarget: number | null;
+  /** Manual order on Today / Progress (ascending), then createdAt. */
+  sortOrder: number;
+  archived: boolean;
   createdAt: string;
   entries: HabitEntry[];
 }

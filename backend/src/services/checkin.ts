@@ -2,7 +2,8 @@
  * Evening check-in: at the user's local `checkinTime` the bot sends one message with a
  * button per habit, so the day gets marked without opening the Mini App.
  *
- * Callback data (≤ 64 bytes): `ci:<habitId>:<YYYY-MM-DD>:<value>` (value 0 = unmark),
+ * Callback data (≤ 64 bytes): `ci:<habitId>:<YYYY-MM-DD>:<value>` (value 0 = unmark; for count
+ * habits value is the new absolute count, and -1 = "+1 from the current entry at tap time"),
  * `cd:<YYYY-MM-DD>` («Готово» → summary). The date is baked in so a late tap still marks
  * the day the message was about; only the user's own habits and dates ≤ 2 days old count.
  */
@@ -17,6 +18,7 @@ import {
   dayDate,
   formatStreak,
   habitStreak,
+  isDone,
   isValidEntryValue,
   setHabitEntry,
   weekStats,
@@ -50,6 +52,10 @@ export interface CheckinHabit {
   binary: boolean;
   measure: string | null;
   weeklyTarget: number | null;
+  dailyTarget: number | null;
+  timeOfDay: string | null;
+  sortOrder: number;
+  createdAt: Date;
 }
 
 export interface CheckinEntry {
@@ -69,6 +75,21 @@ export function localClock(at: Date, tzOffset: number | null): { date: string; h
 
 // ─── Message building (pure) ──────────────────────────────────────────────────
 
+/** `-1` in a count habit's callback = add one to whatever is recorded when the tap lands. */
+const PLUS_ONE = -1;
+const MAX_COUNT = 999;
+const TIME_ORDER: Record<string, number> = { morning: 0, day: 1, evening: 2 };
+
+/** Morning → day → evening → any time, then manual order, then creation. */
+export function sortCheckinHabits<T extends Pick<CheckinHabit, 'timeOfDay' | 'sortOrder' | 'createdAt'>>(habits: T[]): T[] {
+  const rank = (h: T) => (h.timeOfDay != null ? (TIME_ORDER[h.timeOfDay] ?? 3) : 3);
+  return [...habits].sort(
+    (a, b) => rank(a) - rank(b) || a.sortOrder - b.sortOrder || a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+}
+
+const countTarget = (h: Pick<CheckinHabit, 'dailyTarget'>) => Math.max(1, h.dailyTarget ?? 1);
+
 const label = (h: CheckinHabit) => (h.icon ? `${h.icon} ${h.name}` : h.name);
 
 function fmtHours(minutes: number): string {
@@ -78,7 +99,7 @@ function fmtHours(minutes: number): string {
 
 function weekLine(habits: CheckinHabit[], entries: CheckinEntry[], date: string): string | null {
   if (weekdayIndex(date) !== 6) return null; // Sundays only
-  const stats = weekStats(habits, datesByHabit(entries), date);
+  const stats = weekStats(habits, datesByHabit(entries, habits), date);
   if (stats.target === 0) return null;
   let line = `За неделю: ${stats.done} из ${stats.target} отметок`;
   if (stats.best) line += `, лучшая — ${stats.best.name} ${Math.min(stats.best.done, stats.best.target)}/${stats.best.target}`;
@@ -94,7 +115,7 @@ function footerRow(date: string, withDone: boolean): Button[] {
 
 /**
  * The check-in message for `date`: a toggle per habit (`✅`/`▫️`), a 6–9 h row for
- * hours habits, then «Открыть трекер» + «Готово». `entries` should cover at least
+ * hours habits, `[3/8] [+1] [✅ 8]` for count habits, then «Открыть трекер» + «Готово». `entries` should cover at least
  * the Monday week of `date` (for the Sunday week line).
  */
 export function buildCheckinMessage(
@@ -121,6 +142,15 @@ export function buildCheckinMessage(
           return { text: selected ? `✅ ${hours} ч` : `${hours} ч`, callback_data: cb(selected ? 0 : minutes) };
         }),
       );
+    } else if (h.measure === 'count') {
+      // Header shows progress; tapping it clears a recorded count (or adds one when empty).
+      const target = countTarget(h);
+      const n = value ?? 0;
+      keyboard.push([
+        { text: `${isDone(h, n) ? '✅' : '▫️'} ${label(h)} ${n}/${target}`, callback_data: cb(n ? 0 : PLUS_ONE) },
+        { text: '+1', callback_data: cb(PLUS_ONE) },
+        { text: `✅ ${target}`, callback_data: cb(target) },
+      ]);
     } else {
       keyboard.push([{ text: `${value ? '✅' : '▫️'} ${label(h)}`, callback_data: cb(value ? 0 : 1) }]);
     }
@@ -133,7 +163,7 @@ export function buildCheckinMessage(
 
 /** «Готово»: "Отмечено 3 из 4 · серия: 💪 Спорт — 5 дней 🔥". */
 export function buildCheckinSummary(habits: CheckinHabit[], entries: CheckinEntry[], date: string): CheckinMessage {
-  const byHabit = datesByHabit(entries);
+  const byHabit = datesByHabit(entries, habits);
   const marked = habits.filter((h) => byHabit.get(h.id)?.has(date)).length;
 
   let text = marked === 0 ? 'Сегодня без отметок — завтра новый день 🌙' : `Отмечено ${marked} из ${habits.length}`;
@@ -155,10 +185,7 @@ export function buildCheckinSummary(habits: CheckinHabit[], entries: CheckinEntr
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
 async function loadUserHabits(userId: number, date: string) {
-  const habits = await prisma.habit.findMany({
-    where: { userId, archived: false },
-    orderBy: { createdAt: 'asc' },
-  });
+  const habits = sortCheckinHabits(await prisma.habit.findMany({ where: { userId, archived: false } }));
   const entries = await prisma.habitEntry.findMany({
     where: {
       habitId: { in: habits.map((h) => h.id) },
@@ -193,10 +220,14 @@ export async function sendDueCheckins(now = new Date()): Promise<void> {
     if (habits.length === 0) return;
 
     const todayMs = dayDate(clock.date).getTime();
-    const markedToday = new Set(entries.filter((e) => e.date.getTime() === todayMs).map((e) => e.habitId));
+    const doneToday = new Set(
+      entries
+        .filter((e) => e.date.getTime() === todayMs && habits.some((h) => h.id === e.habitId && isDone(h, e.value)))
+        .map((e) => e.habitId),
+    );
     // Claim the day first: a slow/failed send must never repeat on the next tick.
     await prisma.user.update({ where: { id: user.id }, data: { lastCheckinDate: clock.date } });
-    if (habits.every((h) => markedToday.has(h.id))) return;
+    if (habits.every((h) => doneToday.has(h.id))) return;
 
     const msg = buildCheckinMessage(user, habits, entries, clock.date);
     try {
@@ -250,7 +281,7 @@ const reject = (answer: string): CheckinCallbackResult => ({ answer, alert: true
 
 /** Handles `ci:` / `cd:` taps for the Telegram user `telegramId`. */
 export async function handleCheckinCallback(telegramId: number | bigint, data: string): Promise<CheckinCallbackResult> {
-  const m = data.match(/^(?:ci:(\d+):(\d{4}-\d{2}-\d{2}):(\d+)|cd:(\d{4}-\d{2}-\d{2}))$/);
+  const m = data.match(/^(?:ci:(\d+):(\d{4}-\d{2}-\d{2}):(-1|\d+)|cd:(\d{4}-\d{2}-\d{2}))$/);
   if (!m) return reject('Неизвестная кнопка');
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
   if (!user) return reject('Недоступно');
@@ -272,10 +303,19 @@ export async function handleCheckinCallback(telegramId: number | bigint, data: s
   let value = Number(m[3]);
   const habit = await prisma.habit.findFirst({ where: { id: habitId, userId: user.id, archived: false } });
   if (!habit) return reject('Привычка не найдена');
-  if (!isValidEntryValue(habit, value)) return reject('Странное значение');
+  const isCount = habit.measure === 'count';
+  if (value === PLUS_ONE ? !isCount : !isValidEntryValue(habit, value)) return reject('Странное значение');
 
   let answer: string | undefined;
-  if (value === 0) {
+  if (isCount && value !== 0) {
+    // Relative "+1" reads the entry at tap time; an absolute value from a stale «✅ N» never lowers the count.
+    const existing = await prisma.habitEntry.findFirst({ where: { habitId, date: dayDate(date) } });
+    const current = existing?.value ?? 0;
+    value = value === PLUS_ONE ? Math.min(current + 1, MAX_COUNT) : Math.max(current, value);
+    await setHabitEntry(habit, dayDate(date), value);
+    track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { habitId, value, source: 'bot' } });
+    answer = isDone(habit, value) ? `Отмечено ✅ ${value}/${countTarget(habit)}` : `Записал: ${value}/${countTarget(habit)}`;
+  } else if (value === 0) {
     const existing = await prisma.habitEntry.findFirst({ where: { habitId, date: dayDate(date) } });
     if (!existing && habit.measure === 'hours') return { answer: 'Выбери, сколько часов' };
     await setHabitEntry(habit, dayDate(date), 0);

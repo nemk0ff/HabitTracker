@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { adminGuard } from '../middleware/adminGuard.js';
+import { serializeHabit } from './habits.js';
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook('onRequest', adminGuard);
@@ -20,7 +21,7 @@ export async function adminRoutes(app: FastifyInstance) {
                 orderBy: { date: 'asc' },
               },
             },
-            orderBy: { createdAt: 'asc' },
+            orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
           },
         },
       }),
@@ -51,21 +52,7 @@ export async function adminRoutes(app: FastifyInstance) {
             username: u.username,
             lastSeenAt: lastSeenAt ? lastSeenAt.toISOString() : null,
           },
-          habits: u.habits.map((h) => ({
-            id: h.id,
-            name: h.name,
-            color: h.color,
-            icon: h.icon,
-            binary: h.binary,
-            measure: h.measure,
-            weeklyTarget: h.weeklyTarget,
-            createdAt: h.createdAt.toISOString(),
-            entries: h.entries.map((e) => ({
-              id: e.id,
-              date: e.date.toISOString().split('T')[0],
-              value: e.value,
-            })),
-          })),
+          habits: u.habits.map(serializeHabit),
           _sortKey: lastSeenAt ? lastSeenAt.getTime() : 0,
         };
       })

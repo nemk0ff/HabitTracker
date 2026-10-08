@@ -1,31 +1,54 @@
 import { api } from './client';
-import type { Habit, HabitEntry, Reminder } from '../types';
+import type { Habit, HabitEntry, Reminder, TimeOfDay } from '../types';
 
+/** All habits, archived included (filter with sortHabits for the active list). */
 export function fetchHabits(): Promise<Habit[]> {
   return api<Habit[]>('/api/habits');
 }
 
-export function createHabit(data: {
+export interface CreateHabitData {
   name: string;
   color?: string;
   icon?: string;
   binary?: boolean;
-  measure?: 'hours' | null;
+  /** Set on creation only — entries aren't converted later. */
+  measure?: 'hours' | 'count' | null;
   weeklyTarget?: number | null;
-}): Promise<Habit> {
+  timeOfDay?: TimeOfDay | null;
+  /** Count habits only, 1–99. */
+  dailyTarget?: number | null;
+}
+
+export interface UpdateHabitData {
+  name?: string;
+  color?: string;
+  icon?: string;
+  binary?: boolean;
+  weeklyTarget?: number | null;
+  timeOfDay?: TimeOfDay | null;
+  dailyTarget?: number | null;
+  archived?: boolean;
+}
+
+export function createHabit(data: CreateHabitData): Promise<Habit> {
   return api<Habit>('/api/habits', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export function updateHabit(
-  id: number,
-  data: { name?: string; color?: string; icon?: string; binary?: boolean; weeklyTarget?: number | null },
-): Promise<Habit> {
+export function updateHabit(id: number, data: UpdateHabitData): Promise<Habit> {
   return api<Habit>(`/api/habits/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
+  });
+}
+
+/** Saves the manual order: `ids` top to bottom. */
+export function reorderHabits(ids: number[]): Promise<unknown> {
+  return api(`/api/habits/order`, {
+    method: 'PUT',
+    body: JSON.stringify({ ids }),
   });
 }
 
