@@ -10,6 +10,7 @@
  *   total is unchanged. Sleep never enters the formula — it only feeds insights.
  */
 import { prisma } from '../../db.js';
+import { pluralForm } from '../../utils/plural.js';
 
 export const KCAL_PER_KG = 7700;
 const EMA_ALPHA = 0.1;
@@ -289,8 +290,5 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
 
 /** "1 полный день", "2 полных дня", "5 полных дней". */
 function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  const form = m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
-  return `${n} ${form}`;
+  return `${n} ${pluralForm(n, one, few, many)}`;
 }

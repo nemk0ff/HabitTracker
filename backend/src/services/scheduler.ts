@@ -15,7 +15,6 @@ function utcNow() {
   const now = new Date();
   return {
     hhmm: `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`,
-    day: DAY_MAP[now.getUTCDay()],
     todayStart: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
     timestamp: now,
   };
@@ -38,11 +37,21 @@ function minutesSince(time: string, nowMin: number): number {
 /**
  * The user's calendar date at `at`, as the UTC-midnight Date that HabitEntry uses.
  * `tzOffset` follows JS getTimezoneOffset() (UTC − local, Moscow = −180); without it
- * we fall back to the UTC date (the old behaviour).
+ * we assume Moscow (−180), the bulk of users — the same default as `localWeekday` and the check-in.
  */
 function localDay(at: Date, tzOffset: number | null): number {
-  const shifted = new Date(at.getTime() - (tzOffset ?? 0) * 60_000);
+  const shifted = new Date(at.getTime() - (tzOffset ?? -180) * 60_000);
   return Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+}
+
+/**
+ * The user's local weekday ('mon'…'sun') at `at`. `days` are picked in local terms while
+ * `time` is stored in UTC, so a 01:00 MSK Monday reminder fires at 22:00 UTC on Sunday.
+ * Without an offset we assume Moscow (−180), the bulk of users.
+ */
+function localWeekday(at: Date, tzOffset: number | null): string {
+  const shifted = new Date(at.getTime() - (tzOffset ?? -180) * 60_000);
+  return DAY_MAP[shifted.getUTCDay()]!;
 }
 
 /** When the reminder that `sentAt` belongs to was scheduled (sends are ≤ SNOOZE_WINDOW_MIN after `time`). */
@@ -80,7 +89,7 @@ async function tryDelete(chatId: string, messageId: number) {
 }
 
 async function checkAndSendReminders() {
-  const { hhmm, day, todayStart, timestamp } = utcNow();
+  const { hhmm, todayStart, timestamp } = utcNow();
 
   const reminders = await prisma.reminder.findMany({
     where: { enabled: true },
@@ -105,7 +114,7 @@ async function checkAndSendReminders() {
     try {
       return (
         r.time === hhmm &&
-        parseDays(r.days, r.id).includes(day) &&
+        parseDays(r.days, r.id).includes(localWeekday(timestamp, r.habit.user.tzOffset)) &&
         !hasEntry(r, localDay(timestamp, r.habit.user.tzOffset))
       );
     } catch (err) {

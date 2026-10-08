@@ -10,6 +10,7 @@ import { HabitDetailPage } from './pages/HabitDetailPage';
 import { HabitFormPage } from './pages/HabitFormPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { AdminPage } from './pages/AdminPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { FoodDayPage } from './pages/nutrition/FoodDayPage';
 import { FoodAddPage } from './pages/nutrition/FoodAddPage';
 import { FoodProductFormPage } from './pages/nutrition/FoodProductFormPage';
@@ -131,6 +132,7 @@ export default function App() {
       {screen === 'onboarding' && <OnboardingPage key="onboarding" />}
       {screen === 'home' && <HomePage key="home" />}
       {screen === 'admin' && <AdminPage key="admin" />}
+      {screen === 'settings' && <SettingsPage key="settings" />}
       {screen === 'habit' && <HabitDetailPage key="habit" />}
       {(screen === 'create' || screen === 'edit') && <HabitFormPage key="form" />}
       {screen === 'food-day' && <FoodDayPage key="food-day" />}

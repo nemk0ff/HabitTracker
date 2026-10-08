@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { authGuard, JwtPayload } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
+import { isValidEntryValue, maxEntryValue, setHabitEntry } from '../services/habitStats.js';
 
 export async function entriesRoutes(app: FastifyInstance) {
   app.addHook('onRequest', authGuard);
@@ -26,25 +27,15 @@ export async function entriesRoutes(app: FastifyInstance) {
       }
 
       const entryValue = value ?? 1;
-      // Hours habits store minutes (0–24h); level habits store 0–4.
-      const max = habit.measure === 'hours' ? 1440 : 4;
-      if (!Number.isInteger(entryValue) || entryValue < 0 || entryValue > max) {
-        return reply.status(400).send({ error: `value must be an integer 0..${max}` });
+      if (!isValidEntryValue(habit, entryValue)) {
+        return reply.status(400).send({ error: `value must be an integer 0..${maxEntryValue(habit)}` });
       }
 
-      if (entryValue === 0) {
-        await prisma.habitEntry.deleteMany({
-          where: { habitId, date: entryDate },
-        });
+      const entry = await setHabitEntry(habit, entryDate, entryValue);
+      if (!entry) {
         track({ userId, event: 'entry_unchecked', category: 'miniapp', label: date });
         return { deleted: true, date };
       }
-
-      const entry = await prisma.habitEntry.upsert({
-        where: { habitId_date: { habitId, date: entryDate } },
-        update: { value: entryValue },
-        create: { habitId, date: entryDate, value: entryValue },
-      });
 
       track({
         userId,

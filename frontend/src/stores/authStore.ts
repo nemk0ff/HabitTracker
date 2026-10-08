@@ -9,6 +9,8 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   authenticate: (initData: string) => Promise<void>;
+  /** Merges locally saved settings (checkinTime, onboarded) into the current user. */
+  patchUser: (patch: Partial<User>) => void;
 }
 
 let safetyTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -24,6 +26,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   loading: true,
   error: null,
+
+  patchUser: (patch) => set((s) => (s.user ? { user: { ...s.user, ...patch } } : s)),
 
   authenticate: async (initData: string) => {
     clearSafetyTimer();

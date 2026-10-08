@@ -67,6 +67,7 @@ export type Screen =
   | 'create'
   | 'edit'
   | 'admin'
+  | 'settings'
   | 'food-day'
   | 'food-add'
   | 'food-product'

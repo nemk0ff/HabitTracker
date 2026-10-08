@@ -23,8 +23,8 @@ export const HABIT_TEMPLATES: HabitTemplate[] = [
   { key: 'walk', name: 'Прогулка', icon: '🚶', color: '#4CAF50', binary: true, measure: null, weeklyTarget: null },
   { key: 'nosugar', name: 'Без сладкого', icon: '🍬', color: '#E91E63', binary: true, measure: null, weeklyTarget: null },
   { key: 'meditation', name: 'Медитация', icon: '🧘', color: '#607D8B', binary: true, measure: null, weeklyTarget: null },
-  { key: 'english', name: 'Английский', icon: '🇬🇧', color: '#3F51B5', binary: true, measure: null, weeklyTarget: 5 },
-  { key: 'early', name: 'Рано лечь', icon: '🌙', color: '#9C27B0', binary: true, measure: null, weeklyTarget: null },
+  { key: 'english', name: 'Английский', icon: '🇬🇧', color: '#009688', binary: true, measure: null, weeklyTarget: 5 },
+  { key: 'early', name: 'Рано лечь', icon: '🌙', color: '#673AB7', binary: true, measure: null, weeklyTarget: null },
 ];
 
 /** Shown as one-tap chips on the empty Today screen. */

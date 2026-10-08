@@ -8,8 +8,9 @@ import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButton
 import { saveMe } from '../api/me';
 import { toast } from '../stores/toastStore';
 import { HABIT_TEMPLATES, templateHint, templateToHabit } from '../utils/habitTemplates';
+import { readableOn } from '../utils/colors';
 
-const MAX_PICK = 5;
+const MAX_PICK = 3;
 const CHECKIN_PRESETS = ['20:00', '21:00', '22:00'] as const;
 
 /**
@@ -18,6 +19,8 @@ const CHECKIN_PRESETS = ['20:00', '21:00', '22:00'] as const;
  */
 export function OnboardingPage() {
   const navigate = useNavStore((s) => s.navigate);
+  const back = useNavStore((s) => s.back);
+  const canLeave = useNavStore((s) => s.history.length > 0);
   const addHabit = useHabitsStore((s) => s.addHabit);
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -67,7 +70,7 @@ export function OnboardingPage() {
         // Habits are created; the check-in time can be set later — say so, but don't block the user here.
         toast('Не удалось сохранить время вечерней отметки — его можно поменять позже', { tone: 'error', ms: 5000 });
       }
-      useAuthStore.setState((s) => (s.user ? { user: { ...s.user, onboarded: true, checkinTime: checkin } } : s));
+      useAuthStore.getState().patchUser({ onboarded: true, checkinTime: checkin });
       haptic('success');
       navigate('hub');
     } finally {
@@ -75,7 +78,8 @@ export function OnboardingPage() {
     }
   };
 
-  useBackButton(step === 2 ? () => setStep(1) : null);
+  // Opened from Today (there is a screen to return to) → step 1 gets Back too, no dead end.
+  useBackButton(step === 2 ? () => setStep(1) : canLeave ? back : null);
   useMainButton(
     step === 1 ? (picked.length > 0 ? `Дальше (${picked.length})` : null) : 'Начать',
     step === 1 ? next : finish,
@@ -96,7 +100,14 @@ export function OnboardingPage() {
         {step === 1 ? (
           <>
             <h1 className="text-2xl font-semibold text-tg-text">Что хочешь отслеживать?</h1>
-            <p className="text-sm text-tg-hint mt-1 mb-5">Выбери от 1 до {MAX_PICK} привычек — потом можно поменять</p>
+            <p className="text-sm text-tg-hint mt-1">Отмечай одним касанием — плитка закрасится. Начни с 1–3</p>
+            <p
+              className="text-sm mt-1 mb-4 min-h-[20px] transition-opacity"
+              style={{ color: 'var(--accent)', opacity: picked.length >= MAX_PICK ? 1 : 0 }}
+              aria-live="polite"
+            >
+              {picked.length >= MAX_PICK ? 'Для начала хватит трёх — остальные добавишь потом' : ''}
+            </p>
 
             <div className="grid grid-cols-3 gap-2" role="group" aria-label="Готовые привычки">
               {HABIT_TEMPLATES.map((t) => {
@@ -112,7 +123,7 @@ export function OnboardingPage() {
                     className="relative aspect-square rounded-2xl p-3 flex flex-col justify-between text-left transition-colors duration-200"
                     style={{
                       backgroundColor: on ? t.color : 'var(--tg-theme-section-bg-color)',
-                      color: on ? '#fff' : 'var(--tg-theme-text-color)',
+                      color: on ? readableOn(t.color) : 'var(--tg-theme-text-color)',
                       boxShadow: on ? undefined : `inset 0 0 0 1.5px ${t.color}55`,
                       opacity: blocked ? 0.45 : 1,
                     }}
@@ -127,7 +138,10 @@ export function OnboardingPage() {
                       </span>
                     </span>
                     {on && (
-                      <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/25 flex items-center justify-center">
+                      <span
+                        className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: 'color-mix(in srgb, currentColor 22%, transparent)' }}
+                      >
                         <Check size={16} aria-hidden />
                       </span>
                     )}

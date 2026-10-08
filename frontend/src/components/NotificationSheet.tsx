@@ -37,7 +37,7 @@ function localTimeToUTC(localTime: string): string {
   return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
 }
 
-function utcTimeToLocal(utcTime: string): string {
+export function utcTimeToLocal(utcTime: string): string {
   const parts = utcTime.split(':').map(Number);
   const totalMin = (parts[0] ?? 0) * 60 + (parts[1] ?? 0) - new Date().getTimezoneOffset();
   const normalized = ((totalMin % 1440) + 1440) % 1440;

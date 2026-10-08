@@ -135,6 +135,27 @@ bot.callbackQuery(/^(sl|wt|tr|dc):/, async (ctx) => {
   }
 });
 
+/** Evening check-in: `ci:` toggles a habit for the day, `cd:` («Готово») turns the message into a summary. */
+bot.callbackQuery(/^(ci|cd):/, async (ctx) => {
+  try {
+    const { handleCheckinCallback } = await import('./checkin.js');
+    const result = await handleCheckinCallback(ctx.from.id, ctx.callbackQuery.data ?? '');
+    if (result.alert) {
+      await ctx.answerCallbackQuery({ text: result.answer, show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery(result.answer ? { text: result.answer } : undefined);
+    if (result.message) {
+      await ctx
+        .editMessageText(result.message.text, { reply_markup: { inline_keyboard: result.message.keyboard as any } })
+        .catch(() => {}); // "message is not modified" on a double tap
+    }
+  } catch (e) {
+    console.error(`[bot] check-in callback failed (from ${ctx.from.id}, data ${ctx.callbackQuery.data}):`, e);
+    await ctx.answerCallbackQuery({ text: 'Не получилось записать, попробуй ещё раз', show_alert: true }).catch(() => {});
+  }
+});
+
 /** "↩️ Отменить" under a text-log result: removes the entries (and products) it created. */
 bot.callbackQuery(/^tlu:(.+)$/, async (ctx) => {
   try {

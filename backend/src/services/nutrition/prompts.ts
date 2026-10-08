@@ -102,7 +102,8 @@ export async function sendMorningPrompts(): Promise<void> {
 export async function sendTrainingPrompt(): Promise<void> {
   const date = todayMsk();
   await forEachRecipient('training', async (g) => {
-    if (!g.trainingHabitId) return;
+    // The evening check-in already asks about every habit, training included.
+    if (!g.trainingHabitId || g.user.checkinTime) return;
     const done = await prisma.habitEntry.findFirst({ where: { habitId: g.trainingHabitId, date: dayDate(date) } });
     if (done) return;
     await send(g.user.telegramId, '💪 Была сегодня тренировка?', [

@@ -1,4 +1,5 @@
 import { useHabitsStore } from '../stores/habitsStore';
+import { useAuthStore } from '../stores/authStore';
 import { toast, type ToastAction } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
 import { formatHours, isHoursHabit } from './habits';
@@ -24,9 +25,11 @@ function describe(habit: Habit, value: number): string {
  * A fresh mark of an intensity habit also offers Легко / Средне / Тяжело right in the toast.
  */
 export function setHabitValue(habit: Habit, date: string, value: number, { askIntensity = true } = {}) {
-  const { toggleEntry } = useHabitsStore.getState();
+  const { toggleEntry, habits } = useHabitsStore.getState();
   const prev = habit.entries.find((e) => e.date === date)?.value ?? 0;
   if (prev === value) return;
+  // Checked before the optimistic update: no marks at all across every habit → this is the first one.
+  const firstEver = value > 0 && habits.every((h) => !h.entries.some((e) => e.value > 0));
   toggleEntry(habit.id, date, value);
   haptic(value > 0 ? 'light' : 'select');
 
@@ -44,6 +47,15 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
         undo,
       ]
     : [undo];
+  if (firstEver) {
+    haptic('success');
+    const hasCheckin = !!useAuthStore.getState().user?.checkinTime;
+    toast(hasCheckin ? 'Первая отметка! Вечером напомню в боте 🔔' : 'Первая отметка! Так и продолжай 🎉', {
+      actions,
+      ms: 6000,
+    });
+    return;
+  }
   const text = offerIntensity ? `«${habit.name}» отмечено. Как прошло?` : describe(habit, value);
   toast(text, { actions, ms: offerIntensity ? 6000 : 4000 });
 }

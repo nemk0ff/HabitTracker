@@ -17,6 +17,7 @@ import { startAlerts } from './services/alerts.js';
 import { startSessionWarningCron } from './services/claudeSessions.js';
 import { startWeeklySummaryCron } from './services/nutrition/weeklySummary.js';
 import { startDailyPrompts } from './services/nutrition/prompts.js';
+import { startCheckinCron } from './services/checkin.js';
 const PORT = Number(process.env.PORT) || 3001;
 
 const app = Fastify({ logger: true });
@@ -68,6 +69,7 @@ try {
   startSessionWarningCron();
   startWeeklySummaryCron();
   startDailyPrompts();
+  startCheckinCron();
 } catch (err) {
   app.log.error(err);
   process.exit(1);

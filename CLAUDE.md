@@ -90,6 +90,15 @@ ESM Node.js script for local development. CloudPub gives a **stable** URL, so th
 
 **SOCKS proxy note:** If `SOCKS_PROXY` is set in `backend/.env`, dev.mjs applies it to `process.env` at startup so all Telegram API calls (`setChatMenuButton`, `sendMessage`) route through the proxy via `socks-proxy-agent`. Needed on hosts where `api.telegram.org` is blocked (e.g. VPS providers that share Telegram's IP range `149.154.0.0/16`).
 
+### Onboarding, settings & evening check-in (cycles 1–2, Oct 2026)
+- **Why:** prod data showed 6/8 new users never created a habit and nobody returned after day 2 (see `plans/08-10-2026-cycle-*.md`).
+- **User fields:** `tzOffset` (JS `getTimezoneOffset()` sign, Moscow = −180; sent on every `/api/auth`), `checkinTime` (local `HH:MM` or null), `onboardedAt`, `lastCheckinDate` (local date of the last check-in claim). `PUT /api/me {checkinTime?, onboarded?, tzOffset?}` (`routes/me.ts`); `/api/auth` returns `user.onboarded` / `user.checkinTime` and backfills `onboardedAt` for users who already have habits.
+- **Frontend:** `OnboardingPage` (templates from `utils/habitTemplates.ts`, max 3, then check-in time) opens once for `!onboarded && habits.length === 0`; `SettingsPage` (gear on Today, row on «Прогресс») sets the check-in time via `utils/checkin.ts` → `authStore.patchUser`; Today shows «X из N сегодня», «День закрыт ✓ · серия N дней», a check-in invitation banner, and a «+ Добавить» tile; tiles open the habit on long-press or the chevron. Marking happens on Today only — «Прогресс» (`HomePage`) cards open the detail page. Navigation has history: `navStore.back()`.
+- **Bot check-in (`services/checkin.ts`):** cron every minute (UTC) sends one message per local day to users whose `checkinTime` passed < 10 min ago (catch-up window), with a button per habit (`ci:<habitId>:<date>:<value>`, hours habits get a 6–9 h row) and «Готово» (`cd:<date>`) → summary with streaks (`services/habitStats.ts`). The day is claimed before sending (never spams); a 403 (bot blocked) nulls `checkinTime`. A stale «▫️» tap never downgrades an intensity. Users with `checkinTime` don't get the nutrition «была тренировка?» prompt. Sunday adds a week line.
+- **Time zones:** the VPS clock is **Europe/Moscow**; every `cron.schedule` passes `{ timezone: 'UTC' }`. Missing `tzOffset` defaults to Moscow (−180) everywhere (reminder weekday, "already marked today", check-in).
+- **Reliability:** `bot.catch` keeps polling alive; per-recipient isolation via `utils/safe.ts` `forEachSafe`; reminders set `lastSentAt` only after a successful send and have an overlap guard.
+- **Frontend sheets:** `BottomSheet` is a real dialog (focus trap/restore, Escape, Telegram BackButton closes the top sheet; `installBackButtonGuard()` in `main.tsx` keeps page Back handlers from firing while a sheet is open). Text on habit colors uses `readableOn()` (`utils/colors.ts`).
+
 ### Reminder Scheduler
 `startScheduler()` runs a `node-cron` job every minute (UTC). It checks for reminders matching current UTC time and day, sends Telegram messages via `bot.api.sendMessage`, and handles snooze (re-sends every 5 min for up to 1 hour if the habit isn't checked).
 
@@ -109,7 +118,7 @@ Events tracked automatically:
 Aggregate helpers: `getDau()`, `getWau()`, `getNewUsersCount()`, `getTopEvents()` — use Prisma `findMany + distinct` and `groupBy` for SQLite/PostgreSQL compatibility (no raw SQL).
 
 ### Alerts (`src/services/alerts.ts`)
-`startAlerts()` schedules a `node-cron` job at `'0 9 * * *'` (09:00 UTC). Sends an HTML-formatted daily report to `DEVELOPER_CHAT_ID`. The "new users" line appears only when there were new users (the old "0 new users 2 days in a row" alert was removed on request).
+`startAlerts()` schedules a `node-cron` job at `'0 6 * * *'` UTC (09:00 MSK). Sends an HTML-formatted daily report to `DEVELOPER_CHAT_ID`. The "new users" line appears only when there were new users (the old "0 new users 2 days in a row" alert was removed on request).
 
 `sendQuickStats(chatId)` — called by `/stats` bot command (restricted to `DEVELOPER_CHAT_ID`).
 

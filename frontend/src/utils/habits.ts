@@ -44,11 +44,53 @@ export interface WeekProgress {
   target: number;
 }
 
+function markedDates(h: Habit): Set<string> {
+  return new Set(h.entries.filter((e) => e.value > 0).map((e) => e.date));
+}
+
 /** This week's marks against the habit's frequency goal. */
 export function weekProgress(h: Habit, today: string): WeekProgress {
-  const marked = new Set(h.entries.filter((e) => e.value > 0).map((e) => e.date));
+  const marked = markedDates(h);
   const days = weekDates(today).map((date) => ({ date, done: marked.has(date), future: date > today }));
   return { days, done: days.filter((d) => d.done).length, target: h.weeklyTarget ?? 7 };
+}
+
+/** Habit has a mark (value > 0) on `date`. */
+export function isMarkedOn(h: Habit, date: string): boolean {
+  return h.entries.some((e) => e.date === date && e.value > 0);
+}
+
+/**
+ * The day counts as closed when every habit that existed then is marked that day,
+ * or (weekly-goal habits) its week's goal is already met.
+ */
+export function isDayClosed(habits: Habit[], date: string): boolean {
+  const active = habits.filter((h) => toDateString(new Date(h.createdAt)) <= date);
+  if (active.length === 0) return false;
+  return active.every(
+    (h) => isMarkedOn(h, date) || (h.weeklyTarget !== null && weekProgress(h, date).done >= h.weeklyTarget),
+  );
+}
+
+/** Closed days in a row ending today (0 if today isn't closed). Looks back at most 18 weeks — what's loaded. */
+export function closedDaysStreak(habits: Habit[], today: string): number {
+  let streak = 0;
+  let cursor = parseISO(today);
+  for (let i = 0; i < 18 * 7; i++) {
+    if (!isDayClosed(habits, toDateString(cursor))) break;
+    streak++;
+    cursor = addDays(cursor, -1);
+  }
+  return streak;
+}
+
+/** 1 день · 2 дня · 5 дней */
+export function pluralDays(n: number): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return `${n} день`;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} дня`;
+  return `${n} дней`;
 }
 
 /**
@@ -57,7 +99,7 @@ export function weekProgress(h: Habit, today: string): WeekProgress {
  */
 export function weeklyStreak(h: Habit, today: string): number {
   const target = h.weeklyTarget ?? 7;
-  const marked = new Set(h.entries.filter((e) => e.value > 0).map((e) => e.date));
+  const marked = markedDates(h);
   const count = (d: string) => weekDates(d).filter((x) => marked.has(x)).length;
   let streak = 0;
   let cursor = today;

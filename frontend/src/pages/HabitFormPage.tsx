@@ -5,7 +5,7 @@ import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { ColorPicker } from '../components/ColorPicker';
 import { EmojiPicker } from '../components/EmojiPicker';
-import { HABIT_COLORS } from '../utils/colors';
+import { HABIT_COLORS, readableOn } from '../utils/colors';
 import { HABIT_TEMPLATES, type HabitTemplate } from '../utils/habitTemplates';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 
@@ -89,7 +89,7 @@ export function HabitFormPage() {
                     className="shrink-0 min-h-[44px] px-3.5 rounded-full text-sm font-medium flex items-center gap-1.5 transition-colors"
                     style={
                       on
-                        ? { backgroundColor: t.color, color: '#fff' }
+                        ? { backgroundColor: t.color, color: readableOn(t.color) }
                         : { backgroundColor: 'var(--tg-theme-section-bg-color)', color: 'var(--tg-theme-text-color)' }
                     }
                   >
@@ -142,7 +142,7 @@ export function HabitFormPage() {
         </div>
 
         {/* Kind: hours (create only) */}
-        {!isEdit ? (
+        {!isEdit && (
           <div className="mb-6">
             <label className="block text-sm font-semibold text-tg-text mb-2">
               Что отмечаем
@@ -159,15 +159,13 @@ export function HabitFormPage() {
                   type="button"
                   onClick={() => setHours(value)}
                   className="flex-1 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={hours === value ? { backgroundColor: color, color: '#fff' } : { color: 'var(--tg-theme-text-color)' }}
+                  style={hours === value ? { backgroundColor: color, color: readableOn(color) } : { color: 'var(--tg-theme-text-color)' }}
                 >
                   {label}
                 </button>
               ))}
             </div>
           </div>
-        ) : (
-          hours && <p className="text-xs text-tg-hint mb-6 px-1">Тип: часы — сохраняется при создании привычки</p>
         )}
 
         {/* How a day is marked: a plain check or a check with an effort level */}
@@ -197,8 +195,8 @@ export function HabitFormPage() {
                       <span className="block text-xs text-tg-hint mt-0.5">{hint}</span>
                     </span>
                     <span
-                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white"
-                      style={on ? { backgroundColor: color } : { boxShadow: 'inset 0 0 0 1.5px var(--tg-theme-hint-color)' }}
+                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+                      style={on ? { backgroundColor: color, color: readableOn(color) } :{ boxShadow: 'inset 0 0 0 1.5px var(--tg-theme-hint-color)' }}
                     >
                       {on && <Check size={14} aria-hidden />}
                     </span>
@@ -227,7 +225,7 @@ export function HabitFormPage() {
                     className="flex-1 min-h-[44px] rounded-xl text-base font-semibold transition-colors"
                     style={
                       weeklyTarget === n
-                        ? { backgroundColor: color, color: '#fff' }
+                        ? { backgroundColor: color, color: readableOn(color) }
                         : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
                     }
                   >
@@ -242,7 +240,7 @@ export function HabitFormPage() {
                   className="flex-[2] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
                   style={
                     weeklyTarget === null
-                      ? { backgroundColor: color, color: '#fff' }
+                      ? { backgroundColor: color, color: readableOn(color) }
                       : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
                   }
                 >

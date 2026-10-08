@@ -18,6 +18,8 @@ model User {
   tzOffset      Int?
   /// Local 'HH:MM' of the evening check-in.
   checkinTime   String?
+  /// Local 'YYYY-MM-DD' of the last evening check-in sent (or skipped because everything was marked).
+  lastCheckinDate String?
   onboardedAt   DateTime?
   habits        Habit[]
   events        AnalyticsEvent[]

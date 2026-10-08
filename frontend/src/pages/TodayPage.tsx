@@ -1,24 +1,26 @@
-import { memo, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { ChevronRight, Plus, Utensils, Scale, NotebookText } from 'lucide-react';
+import { ChevronRight, Plus, Utensils, Scale, NotebookText, Settings } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '../stores/authStore';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useNutritionStore } from '../stores/nutritionStore';
 import { toast } from '../stores/toastStore';
+import { CheckinBanner } from '../components/CheckinBanner';
+import { EmptyHabits } from '../components/EmptyHabits';
+import { HabitTile } from '../components/HabitTile';
 import { HoursSheet } from '../components/HoursSheet';
 import { WeightSheet } from '../components/nutrition/WeightSheet';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { useToday } from '../hooks/useToday';
 import { capitalizeFirst } from '../utils/dates';
-import { readableOn } from '../utils/colors';
 import { MACRO_COLORS, fmt, mealByTime } from '../utils/nutrition';
-import { formatHours, isHoursHabit, weekProgress } from '../utils/habits';
+import { closedDaysStreak, isDayClosed, isHoursHabit, isMarkedOn, pluralDays } from '../utils/habits';
+import { dismissCheckinBanner, isCheckinBannerDismissed, saveCheckinTime } from '../utils/checkin';
 import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
-import { HABIT_TEMPLATES, QUICK_TEMPLATE_KEYS, templateToHabit, type HabitTemplate } from '../utils/habitTemplates';
 import type { Habit } from '../types';
 
 /**
@@ -40,6 +42,14 @@ export function TodayPage() {
   const [hoursHabitId, setHoursHabitId] = useState<number | null>(null);
   const hoursHabit = habits.find((h) => h.id === hoursHabitId) ?? null;
   const [weightOpen, setWeightOpen] = useState(false);
+
+  const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
+  const [bannerHidden, setBannerHidden] = useState(isCheckinBannerDismissed);
+  const showBanner = habits.length > 0 && !checkinTime && !bannerHidden;
+
+  const markedToday = habits.filter((h) => isMarkedOn(h, today)).length;
+  const closed = useMemo(() => isDayClosed(habits, today), [habits, today]);
+  const closedStreak = useMemo(() => (closed ? closedDaysStreak(habits, today) : 0), [closed, habits, today]);
 
   useBackButton(null);
   useMainButton(null, () => {});
@@ -72,7 +82,53 @@ export function TodayPage() {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="scrollable">
       <div className="p-4 pb-10">
-        <h1 className="text-xl font-semibold text-tg-text mb-4">{capitalizeFirst(format(parseISO(today), 'EEEE, d MMMM', { locale: ru }))}</h1>
+        <div className="flex items-start justify-between gap-2 mb-4">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold text-tg-text pt-2">
+              {capitalizeFirst(format(parseISO(today), 'EEEE, d MMMM', { locale: ru }))}
+            </h1>
+            {habits.length > 0 && (
+              <div className="mt-2">
+                <div className="flex items-baseline gap-2">
+                  {/* The habits count is the screen's big number unless the kcal block already holds that role. */}
+                  <span
+                    className={nutrition ? 'text-2xl font-semibold leading-none' : 'font-display text-[36px] leading-none'}
+                    style={{ color: closed ? 'var(--accent)' : 'var(--tg-theme-text-color)' }}
+                  >
+                    {markedToday} из {habits.length}
+                  </span>
+                  <span className="text-sm text-tg-hint">сегодня</span>
+                </div>
+                {closed && (
+                  <p className="text-sm font-medium mt-1.5" style={{ color: 'var(--accent)' }}>
+                    День закрыт ✓ · серия {pluralDays(closedStreak)}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => navigate('settings')}
+            aria-label="Настройки"
+            className="w-11 h-11 -mr-2 shrink-0 rounded-xl flex items-center justify-center text-tg-hint active:opacity-60"
+          >
+            <Settings size={22} aria-hidden />
+          </button>
+        </div>
+
+        {showBanner && (
+          <CheckinBanner
+            onAccept={async () => {
+              if (await saveCheckinTime('21:00')) setBannerHidden(true);
+            }}
+            onOther={() => navigate('settings')}
+            onDismiss={() => {
+              dismissCheckinBanner();
+              setBannerHidden(true);
+              haptic('select');
+            }}
+          />
+        )}
 
         {/* The day's main block: what's left to eat + weight */}
         {nutrition && (
@@ -165,8 +221,8 @@ export function TodayPage() {
         {/* Habits: tap a tile to mark today */}
         <div className="flex items-baseline justify-between mb-2">
           <h2 className="text-base font-semibold text-tg-text">Привычки</h2>
-          <button onClick={() => navigate('home')} className="text-sm text-tg-hint flex items-center min-h-[32px]">
-            Все <ChevronRight size={16} aria-hidden />
+          <button onClick={() => navigate('home')} className="text-sm text-tg-hint flex items-center min-h-[44px] -my-2">
+            Прогресс <ChevronRight size={16} aria-hidden />
           </button>
         </div>
 
@@ -177,6 +233,16 @@ export function TodayPage() {
             {habits.map((h) => (
               <HabitTile key={h.id} habit={h} date={today} onTap={tapHabit} onOpen={openHabit} />
             ))}
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.95 }}
+              onClick={() => navigate('create')}
+              className="aspect-square rounded-2xl p-3 flex flex-col items-center justify-center gap-1.5 text-tg-hint"
+              style={{ boxShadow: 'inset 0 0 0 1.5px color-mix(in srgb, var(--tg-theme-hint-color) 45%, transparent)' }}
+            >
+              <Plus size={24} aria-hidden />
+              <span className="text-sm font-medium">Добавить</span>
+            </motion.button>
           </div>
         )}
       </div>
@@ -200,123 +266,3 @@ export function TodayPage() {
     </motion.div>
   );
 }
-
-interface TileProps {
-  habit: Habit;
-  date: string;
-  onTap: (habit: Habit) => void;
-  onOpen: (id: number) => void;
-}
-
-const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }: TileProps) {
-  const entry = habit.entries.find((e) => e.date === date && e.value > 0);
-  const done = !!entry;
-  const hours = isHoursHabit(habit);
-  const week = weekProgress(habit, date);
-  // On a filled tile the ink is black or white by the habit colour's brightness (white on yellow is unreadable).
-  const ink = done ? readableOn(habit.color) : 'var(--tg-theme-text-color)';
-  const weekTarget = habit.weeklyTarget ? week.target : 7;
-  const label =
-    `${habit.name}: ${done ? 'отмечено' : 'не отмечено'}` +
-    (hours && done ? `, ${formatHours(entry!.value)}` : '') +
-    `. На этой неделе ${week.done} из ${weekTarget}`;
-
-  return (
-    <div className="relative">
-      <motion.button
-        whileTap={{ scale: 0.95 }}
-        onClick={() => onTap(habit)}
-        aria-pressed={done}
-        aria-label={label}
-        className="w-full aspect-square rounded-2xl p-3 flex flex-col justify-between text-left transition-colors duration-200"
-        style={{
-          backgroundColor: done ? habit.color : 'var(--tg-theme-section-bg-color)',
-          color: ink,
-          boxShadow: done ? undefined : `inset 0 0 0 1.5px ${habit.color}55`,
-        }}
-      >
-        <span className="text-2xl leading-none" aria-hidden>{habit.icon ?? '•'}</span>
-        <span aria-hidden>
-          {hours && done && <span className="block font-display text-base leading-tight">{formatHours(entry!.value)}</span>}
-          <span className="block text-sm font-medium leading-tight line-clamp-2">{habit.name}</span>
-          {/* This week at a glance: "2 из 3" for weekly goals, seven day dots for daily habits */}
-          {habit.weeklyTarget ? (
-            <span className="block text-xs mt-1 whitespace-nowrap" style={{ opacity: 0.85 }}>
-              {week.done} из {week.target} в нед.
-            </span>
-          ) : (
-            <span className="flex gap-[3px] mt-1.5">
-              {week.days.map((d) => (
-                <span
-                  key={d.date}
-                  className="w-[7px] h-[7px] rounded-full"
-                  style={
-                    d.done
-                      ? { backgroundColor: done ? ink : habit.color }
-                      : // Empty day: an outline ring (not a faint fill), dimmer for days still ahead.
-                        { boxShadow: `inset 0 0 0 ${d.future ? 1 : 1.5}px currentColor`, opacity: d.future ? 0.7 : 0.85 }
-                  }
-                />
-              ))}
-            </span>
-          )}
-        </span>
-      </motion.button>
-      <button
-        onClick={() => onOpen(habit.id)}
-        aria-label={`Открыть «${habit.name}»`}
-        className="absolute top-0 right-0 w-10 h-10 flex items-center justify-center"
-        style={{ color: done ? ink : 'var(--tg-theme-hint-color)' }}
-      >
-        <ChevronRight size={18} aria-hidden />
-      </button>
-    </div>
-  );
-});
-
-/** No habits yet: one tap on a chip creates a ready-made habit; the full picker is one more tap away. */
-function EmptyHabits({ onPickMore }: { onPickMore: () => void }) {
-  const addHabit = useHabitsStore((s) => s.addHabit);
-  const [busy, setBusy] = useState<string | null>(null);
-  const quick = QUICK_TEMPLATE_KEYS.map((k) => HABIT_TEMPLATES.find((t) => t.key === k)).filter(
-    (t): t is HabitTemplate => !!t,
-  );
-
-  const add = async (t: HabitTemplate) => {
-    if (busy) return;
-    setBusy(t.key);
-    const ok = await addHabit(templateToHabit(t));
-    setBusy(null);
-    haptic(ok ? 'success' : 'error');
-  };
-
-  return (
-    <div className="rounded-2xl bg-tg-section p-4">
-      <p className="text-base font-medium text-tg-text">Начни с одной привычки</p>
-      <p className="text-sm text-tg-hint mt-0.5">Нажми — и она появится здесь, отмечать можно сразу</p>
-      <div className="flex flex-wrap gap-2 mt-3">
-        {quick.map((t) => (
-          <motion.button
-            key={t.key}
-            type="button"
-            whileTap={{ scale: 0.95 }}
-            onClick={() => add(t)}
-            disabled={!!busy}
-            className="min-h-[44px] px-4 rounded-full text-sm font-medium flex items-center gap-1.5 disabled:opacity-60"
-            style={{ backgroundColor: t.color, color: readableOn(t.color) }}
-          >
-            <span aria-hidden>{t.icon}</span> {t.name}
-          </motion.button>
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={onPickMore}
-        className="mt-2 min-h-[44px] text-sm font-medium flex items-center gap-1"
-        style={{ color: 'var(--accent)' }}
-      >
-        Выбрать из списка <ChevronRight size={16} aria-hidden />
-      </button>
-    </div>
-  );
-}

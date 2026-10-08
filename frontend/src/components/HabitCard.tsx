@@ -3,10 +3,8 @@ import { motion } from 'framer-motion';
 import { MiniHeatmap } from './MiniHeatmap';
 import { calculateStreak, toDateString } from '../utils/dates';
 import { useNavStore } from '../stores/navStore';
-import { HoursSheet } from './HoursSheet';
 import { formatHours, isHoursHabit, levelEntries, weekProgress } from '../utils/habits';
 import { Check, ChevronRight, Flame } from 'lucide-react';
-import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
 import { readableOn, legibleColor, useIsDark } from '../utils/colors';
 import type { Habit } from '../types';
 
@@ -32,7 +30,6 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
   const isDark = useIsDark();
   const onColor = readableOn(habit.color);
   const textColor = legibleColor(habit.color, isDark);
-  const [hoursOpen, setHoursOpen] = useState(false);
 
   const heatmapRef = useRef<HTMLDivElement>(null);
   const [weeks, setWeeks] = useState(18);
@@ -55,12 +52,9 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
     return () => observer.disconnect();
   }, []);
 
-  // Tapping anywhere on the card marks today (the main action); details open via "›".
-  const handleCheck = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (hours) setHoursOpen(true);
-    else toggleHabitDay(habit, todayStr);
-  };
+  // One way to mark (on Today): here a tap opens the habit; the square only shows today's state.
+  const open = () => navigate('habit', { selectedHabitId: habit.id });
+  const statusLabel = `${habit.name}: ${isDoneToday ? 'сегодня отмечено' : 'сегодня не отмечено'}`;
 
   return (
     <motion.div
@@ -69,7 +63,20 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
       whileTap={readOnly ? undefined : { scale: 0.98 }}
-      onClick={readOnly ? undefined : handleCheck}
+      onClick={readOnly ? undefined : open}
+      role={readOnly ? undefined : 'button'}
+      tabIndex={readOnly ? undefined : 0}
+      aria-label={readOnly ? undefined : `Открыть «${habit.name}»`}
+      onKeyDown={
+        readOnly
+          ? undefined
+          : (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                open();
+              }
+            }
+      }
       className={`bg-tg-section rounded-2xl p-4 transition-opacity ${
         readOnly ? '' : 'cursor-pointer active:opacity-80'
       }`}
@@ -90,10 +97,9 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
         <div className="shrink-0 flex flex-col justify-between items-start min-w-14 max-w-[160px] w-fit">
           {/* Checkbox + emoji icon */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={readOnly ? undefined : handleCheck}
-              disabled={readOnly}
-              aria-label={isDoneToday ? `${habit.name}: снять отметку` : `${habit.name}: отметить сегодня`}
+            <span
+              role="img"
+              aria-label={statusLabel}
               className={`${hours && isDoneToday ? 'px-2 min-w-10' : 'w-10'} h-10 rounded-xl flex items-center justify-center transition-all duration-200 shrink-0`}
               style={{
                 backgroundColor: isDoneToday ? habit.color : 'transparent',
@@ -106,22 +112,11 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
               {!hours && isDoneToday && (
                 <Check size={16} color={onColor} strokeWidth={2.5} aria-hidden />
               )}
-            </button>
+            </span>
             {habit.icon && (
               <span className="text-xl leading-none" aria-hidden="true">{habit.icon}</span>
             )}
-            {!readOnly && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate('habit', { selectedHabitId: habit.id });
-                }}
-                aria-label={`Открыть «${habit.name}»`}
-                className="w-10 h-10 -mr-2 flex items-center justify-center text-tg-hint"
-              >
-                <ChevronRight size={18} aria-hidden />
-              </button>
-            )}
+            {!readOnly && <ChevronRight size={18} className="text-tg-hint -mr-1" aria-hidden />}
           </div>
 
           {/* Name */}
@@ -145,17 +140,6 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
           )}
         </div>
       </div>
-
-      {hours && (
-        <HoursSheet
-          date={hoursOpen ? todayStr : null}
-          title={habit.name}
-          minutes={todayEntry?.value ?? 0}
-          color={habit.color}
-          onClose={() => setHoursOpen(false)}
-          onSave={(m) => setHabitValue(habit, todayStr, m)}
-        />
-      )}
     </motion.div>
   );
 });

@@ -1,13 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Pencil } from 'lucide-react';
+import { Bell, BellOff, ChevronRight, Pencil } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { Heatmap } from '../components/Heatmap';
 import { StatCard } from '../components/StatCard';
-import { NotificationSheet } from '../components/NotificationSheet';
+import { NotificationSheet, utcTimeToLocal } from '../components/NotificationSheet';
 import { calculateStreak, getMonthCompletionRate } from '../utils/dates';
 import { fetchReminder, saveReminder } from '../api/habits';
 import { HoursSheet } from '../components/HoursSheet';
@@ -65,6 +65,7 @@ export function HabitDetailPage() {
   const completionRate = getMonthCompletionRate(habit.entries, now.getFullYear(), now.getMonth());
 
   const hours = isHoursHabit(habit);
+  const reminderOn = !!reminder?.enabled && reminder.days.length > 0;
   const today = toDateString(now);
   const avg7 = hours ? averageHours(habit.entries, toDateString(new Date(Date.now() - 6 * 86_400_000))) : null;
   const week = weekProgress(habit, today);
@@ -121,34 +122,40 @@ export function HabitDetailPage() {
             <h1 className="text-xl font-bold text-tg-text truncate">{habit.name}</h1>
           </div>
           <button
-            onClick={() => {
-              setNotifOpen(true);
-              haptic('light');
-            }}
-            aria-label={reminder?.enabled ? 'Напоминание включено' : 'Напоминание'}
-            className="w-9 h-9 rounded-xl flex items-center justify-center bg-tg-secondary active:opacity-70 transition-opacity"
-          >
-            {reminder?.enabled ? (
-              <Bell size={18} fill={habit.color} color={habit.color} strokeWidth={1.5} aria-hidden />
-            ) : (
-              <Bell size={18} strokeWidth={1.5} aria-hidden />
-            )}
-          </button>
-          <button
             onClick={() => navigate('edit', { selectedHabitId: habit.id })}
             aria-label="Редактировать"
-            className="w-9 h-9 rounded-xl flex items-center justify-center bg-tg-secondary active:opacity-70 transition-opacity"
+            className="w-11 h-11 rounded-xl flex items-center justify-center bg-tg-secondary active:opacity-70 transition-opacity"
           >
             <Pencil size={18} strokeWidth={1.5} aria-hidden />
           </button>
         </div>
 
         {/* Stats */}
-        <div className="flex gap-2 mb-5">
+        <div className="flex gap-2 mb-3">
           {stats.map((s) => (
             <StatCard key={s.label} label={s.label} value={s.value} color={habit.color} />
           ))}
         </div>
+
+        {/* Reminder state in words, not a bare bell icon */}
+        <button
+          onClick={() => {
+            setNotifOpen(true);
+            haptic('light');
+          }}
+          className="w-full min-h-[48px] px-4 mb-5 rounded-2xl bg-tg-section flex items-center gap-3 text-left active:opacity-70 transition-opacity"
+        >
+          {reminderOn ? (
+            <Bell size={18} fill={habit.color} color={habit.color} strokeWidth={1.5} aria-hidden />
+          ) : (
+            <BellOff size={18} strokeWidth={1.5} className="text-tg-hint" aria-hidden />
+          )}
+          <span className="flex-1 text-sm text-tg-text">Напоминание</span>
+          <span className="text-sm tabular-nums" style={{ color: reminderOn ? 'var(--tg-theme-text-color)' : 'var(--tg-theme-hint-color)' }}>
+            {reminderOn ? utcTimeToLocal(reminder!.time) : 'выкл'}
+          </span>
+          <ChevronRight size={16} className="text-tg-hint" aria-hidden />
+        </button>
 
         {hours && (
           <div className="bg-tg-section rounded-2xl p-4 mb-5">

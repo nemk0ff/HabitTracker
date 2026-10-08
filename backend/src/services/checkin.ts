@@ -1,0 +1,299 @@
+/**
+ * Evening check-in: at the user's local `checkinTime` the bot sends one message with a
+ * button per habit, so the day gets marked without opening the Mini App.
+ *
+ * Callback data (≤ 64 bytes): `ci:<habitId>:<YYYY-MM-DD>:<value>` (value 0 = unmark),
+ * `cd:<YYYY-MM-DD>` («Готово» → summary). The date is baked in so a late tap still marks
+ * the day the message was about; only the user's own habits and dates ≤ 2 days old count.
+ */
+import cron from 'node-cron';
+import { prisma } from '../db.js';
+import { bot } from './bot.js';
+import { track } from './analytics.js';
+import { forEachSafe } from '../utils/safe.js';
+import {
+  addDays,
+  datesByHabit,
+  dayDate,
+  formatStreak,
+  habitStreak,
+  isValidEntryValue,
+  setHabitEntry,
+  weekStats,
+  weekdayIndex,
+  type Streak,
+} from './habitStats.js';
+
+const WEBAPP_URL = process.env.WEBAPP_URL || '';
+/** Moscow — for users whose client never sent an offset. */
+export const DEFAULT_TZ_OFFSET = -180;
+const MAX_CHECKIN_HABITS = 12;
+const MAX_CALLBACK_AGE_DAYS = 2;
+const HOURS_OPTIONS = [6, 7, 8, 9];
+/** Entries this far back are enough for streaks. */
+const HISTORY_DAYS = 400;
+
+export const CHECKIN_TEXT = 'Как прошёл день? Отметь, что получилось:';
+
+type Button = { text: string; callback_data?: string; web_app?: { url: string } };
+export type Keyboard = Button[][];
+
+export interface CheckinMessage {
+  text: string;
+  keyboard: Keyboard;
+}
+
+export interface CheckinHabit {
+  id: number;
+  name: string;
+  icon: string | null;
+  binary: boolean;
+  measure: string | null;
+  weeklyTarget: number | null;
+}
+
+export interface CheckinEntry {
+  habitId: number;
+  date: Date;
+  value: number;
+}
+
+// ─── Local time ───────────────────────────────────────────────────────────────
+
+/** The user's local date / time at `at` (`tzOffset` = JS getTimezoneOffset, Moscow −180). */
+export function localClock(at: Date, tzOffset: number | null): { date: string; hhmm: string } {
+  const shifted = new Date(at.getTime() - (tzOffset ?? DEFAULT_TZ_OFFSET) * 60_000);
+  const iso = shifted.toISOString();
+  return { date: iso.slice(0, 10), hhmm: iso.slice(11, 16) };
+}
+
+// ─── Message building (pure) ──────────────────────────────────────────────────
+
+const label = (h: CheckinHabit) => (h.icon ? `${h.icon} ${h.name}` : h.name);
+
+function fmtHours(minutes: number): string {
+  const h = minutes / 60;
+  return `${Number.isInteger(h) ? h : h.toFixed(1).replace('.', ',')} ч`;
+}
+
+function weekLine(habits: CheckinHabit[], entries: CheckinEntry[], date: string): string | null {
+  if (weekdayIndex(date) !== 6) return null; // Sundays only
+  const stats = weekStats(habits, datesByHabit(entries), date);
+  if (stats.target === 0) return null;
+  let line = `За неделю: ${stats.done} из ${stats.target} отметок`;
+  if (stats.best) line += `, лучшая — ${stats.best.name} ${Math.min(stats.best.done, stats.best.target)}/${stats.best.target}`;
+  return line;
+}
+
+function footerRow(date: string, withDone: boolean): Button[] {
+  const row: Button[] = [];
+  if (WEBAPP_URL) row.push({ text: '📱 Открыть трекер', web_app: { url: WEBAPP_URL } });
+  if (withDone) row.push({ text: 'Готово', callback_data: `cd:${date}` });
+  return row;
+}
+
+/**
+ * The check-in message for `date`: a toggle per habit (`✅`/`▫️`), a 6–9 h row for
+ * hours habits, then «Открыть трекер» + «Готово». `entries` should cover at least
+ * the Monday week of `date` (for the Sunday week line).
+ */
+export function buildCheckinMessage(
+  _user: { id: number },
+  habits: CheckinHabit[],
+  entries: CheckinEntry[],
+  date: string,
+): CheckinMessage {
+  const today = new Map<number, number>();
+  for (const e of entries) if (e.date.getTime() === dayDate(date).getTime()) today.set(e.habitId, e.value);
+
+  const keyboard: Keyboard = [];
+  // Telegram caps an inline keyboard at 100 buttons; an hours habit takes 1 + 4. 12 habits stay well under it.
+  for (const h of habits.slice(0, MAX_CHECKIN_HABITS)) {
+    const value = today.get(h.id);
+    const cb = (v: number) => `ci:${h.id}:${date}:${v}`;
+    if (h.measure === 'hours') {
+      // Header shows the recorded amount; tapping it clears the mark.
+      keyboard.push([{ text: value ? `✅ ${label(h)} · ${fmtHours(value)}` : `▫️ ${label(h)}`, callback_data: cb(0) }]);
+      keyboard.push(
+        HOURS_OPTIONS.map((hours) => {
+          const minutes = hours * 60;
+          const selected = value === minutes;
+          return { text: selected ? `✅ ${hours} ч` : `${hours} ч`, callback_data: cb(selected ? 0 : minutes) };
+        }),
+      );
+    } else {
+      keyboard.push([{ text: `${value ? '✅' : '▫️'} ${label(h)}`, callback_data: cb(value ? 0 : 1) }]);
+    }
+  }
+  keyboard.push(footerRow(date, true));
+
+  const week = weekLine(habits, entries, date);
+  return { text: week ? `${CHECKIN_TEXT}\n\n${week}` : CHECKIN_TEXT, keyboard: keyboard.filter((r) => r.length > 0) };
+}
+
+/** «Готово»: "Отмечено 3 из 4 · серия: 💪 Спорт — 5 дней 🔥". */
+export function buildCheckinSummary(habits: CheckinHabit[], entries: CheckinEntry[], date: string): CheckinMessage {
+  const byHabit = datesByHabit(entries);
+  const marked = habits.filter((h) => byHabit.get(h.id)?.has(date)).length;
+
+  let text = marked === 0 ? 'Сегодня без отметок — завтра новый день 🌙' : `Отмечено ${marked} из ${habits.length}`;
+
+  let best: { habit: CheckinHabit; streak: Streak } | null = null;
+  for (const h of habits) {
+    const streak = habitStreak(h, byHabit.get(h.id) ?? new Set(), date);
+    // Compare in days so a 2-week streak beats a 5-day one.
+    const weight = (s: Streak) => s.count * (s.unit === 'week' ? 7 : 1);
+    if (streak.count >= 2 && (!best || weight(streak) > weight(best.streak))) best = { habit: h, streak };
+  }
+  if (best) text += ` · серия: ${label(best.habit)} — ${formatStreak(best.streak)} 🔥`;
+
+  const week = weekLine(habits, entries, date);
+  if (week) text += `\n${week}`;
+  return { text, keyboard: [footerRow(date, false)].filter((r) => r.length > 0) };
+}
+
+// ─── Data ─────────────────────────────────────────────────────────────────────
+
+async function loadUserHabits(userId: number, date: string) {
+  const habits = await prisma.habit.findMany({
+    where: { userId, archived: false },
+    orderBy: { createdAt: 'asc' },
+  });
+  const entries = await prisma.habitEntry.findMany({
+    where: {
+      habitId: { in: habits.map((h) => h.id) },
+      date: { gte: dayDate(addDays(date, -HISTORY_DAYS)), lte: dayDate(date) },
+    },
+    select: { habitId: true, date: true, value: true },
+  });
+  return { habits, entries };
+}
+
+// ─── Sending ──────────────────────────────────────────────────────────────────
+
+let isRunning = false;
+
+/** A tick can be missed (pm2 restart during a deploy, a slow previous run) — catch up within this window. */
+const SEND_WINDOW_MIN = 10;
+
+const toMinutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+
+/** Sends the check-in to every user whose `checkinTime` passed less than SEND_WINDOW_MIN ago (once per local day). */
+export async function sendDueCheckins(now = new Date()): Promise<void> {
+  const users = await prisma.user.findMany({ where: { checkinTime: { not: null } } });
+  const due = users
+    .map((u) => ({ user: u, clock: localClock(now, u.tzOffset) }))
+    .filter(({ user, clock }) => {
+      const late = toMinutes(clock.hhmm) - toMinutes(user.checkinTime!);
+      return late >= 0 && late < SEND_WINDOW_MIN && user.lastCheckinDate !== clock.date;
+    });
+
+  await forEachSafe(due, '[checkin] send', ({ user }) => `user ${user.id}`, async ({ user, clock }) => {
+    const { habits, entries } = await loadUserHabits(user.id, clock.date);
+    if (habits.length === 0) return;
+
+    const todayMs = dayDate(clock.date).getTime();
+    const markedToday = new Set(entries.filter((e) => e.date.getTime() === todayMs).map((e) => e.habitId));
+    // Claim the day first: a slow/failed send must never repeat on the next tick.
+    await prisma.user.update({ where: { id: user.id }, data: { lastCheckinDate: clock.date } });
+    if (habits.every((h) => markedToday.has(h.id))) return;
+
+    const msg = buildCheckinMessage(user, habits, entries, clock.date);
+    try {
+      await bot.api.sendMessage(String(user.telegramId), msg.text, {
+        reply_markup: { inline_keyboard: msg.keyboard as any },
+      });
+    } catch (e: any) {
+      // Blocked the bot: stop asking every evening (they can re-enable it in the Mini App settings).
+      if (e?.error_code === 403) {
+        await prisma.user.update({ where: { id: user.id }, data: { checkinTime: null } });
+        track({ userId: user.id, event: 'checkin_disabled_blocked', category: 'bot' });
+        return;
+      }
+      throw e;
+    }
+    track({ userId: user.id, event: 'checkin_sent', category: 'bot', label: clock.date });
+  });
+}
+
+export function startCheckinCron(): void {
+  cron.schedule(
+    '* * * * *',
+    async () => {
+      if (isRunning) return;
+      isRunning = true;
+      try {
+        await sendDueCheckins();
+      } catch (e) {
+        console.error('[checkin] tick failed:', e);
+      } finally {
+        isRunning = false;
+      }
+    },
+    { timezone: 'UTC' },
+  );
+  console.log('[checkin] scheduled (runs every minute)');
+}
+
+// ─── Callbacks ────────────────────────────────────────────────────────────────
+
+export interface CheckinCallbackResult {
+  /** Toast text (or alert text when `alert`). */
+  answer?: string;
+  /** Rejected tap: show a popup and leave the message untouched. */
+  alert?: boolean;
+  /** New message content to edit in. */
+  message?: CheckinMessage;
+}
+
+const reject = (answer: string): CheckinCallbackResult => ({ answer, alert: true });
+
+/** Handles `ci:` / `cd:` taps for the Telegram user `telegramId`. */
+export async function handleCheckinCallback(telegramId: number | bigint, data: string): Promise<CheckinCallbackResult> {
+  const m = data.match(/^(?:ci:(\d+):(\d{4}-\d{2}-\d{2}):(\d+)|cd:(\d{4}-\d{2}-\d{2}))$/);
+  if (!m) return reject('Неизвестная кнопка');
+  const user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
+  if (!user) return reject('Недоступно');
+
+  const date = (m[2] ?? m[4])!;
+  const today = localClock(new Date(), user.tzOffset).date;
+  if (Number.isNaN(dayDate(date).getTime()) || date > today || date < addDays(today, -MAX_CALLBACK_AGE_DAYS)) {
+    return reject('Эта сводка устарела — отметь в трекере');
+  }
+
+  if (m[4]) {
+    const { habits, entries } = await loadUserHabits(user.id, date);
+    const summary = buildCheckinSummary(habits, entries, date);
+    track({ userId: user.id, event: 'checkin_done', category: 'bot', label: date });
+    return { message: summary };
+  }
+
+  const habitId = Number(m[1]);
+  let value = Number(m[3]);
+  const habit = await prisma.habit.findFirst({ where: { id: habitId, userId: user.id, archived: false } });
+  if (!habit) return reject('Привычка не найдена');
+  if (!isValidEntryValue(habit, value)) return reject('Странное значение');
+
+  let answer: string | undefined;
+  if (value === 0) {
+    const existing = await prisma.habitEntry.findFirst({ where: { habitId, date: dayDate(date) } });
+    if (!existing && habit.measure === 'hours') return { answer: 'Выбери, сколько часов' };
+    await setHabitEntry(habit, dayDate(date), 0);
+    track({ userId: user.id, event: 'entry_unchecked', category: 'bot', label: date, metadata: { habitId, source: 'bot' } });
+    answer = 'Отметка снята';
+  } else {
+    // A stale «▫️» button (the day was marked in the Mini App meanwhile) must not downgrade
+    // an intensity of 2–3 to 1: for non-hours habits "mark" only creates a missing entry.
+    if (habit.measure !== 'hours') {
+      const existing = await prisma.habitEntry.findFirst({ where: { habitId, date: dayDate(date) } });
+      if (existing && existing.value > 0) value = existing.value;
+    }
+    await setHabitEntry(habit, dayDate(date), value);
+    track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { habitId, value, source: 'bot' } });
+    answer = habit.measure === 'hours' ? `Записал: ${fmtHours(value)}` : 'Отмечено ✅';
+  }
+  track({ userId: user.id, event: 'checkin_marked', category: 'bot', label: date, metadata: { habitId, value } });
+
+  const { habits, entries } = await loadUserHabits(user.id, date);
+  return { answer, message: buildCheckinMessage(user, habits, entries, date) };
+}
