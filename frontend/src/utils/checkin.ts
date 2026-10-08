@@ -5,19 +5,33 @@ import { haptic } from '../hooks/useTelegramButtons';
 
 export const CHECKIN_PRESETS = ['20:00', '21:00', '22:00', '23:00'] as const;
 
-/** Saves the evening check-in time (local HH:MM, null = off) and mirrors it into the auth store. */
-export async function saveCheckinTime(time: string | null): Promise<boolean> {
+export const MORNING_CHECKIN_PRESETS = ['07:00', '08:00', '09:00'] as const;
+
+type CheckinField = 'checkinTime' | 'morningCheckinTime';
+
+/** Saves a check-in time (local HH:MM, null = off) and mirrors it into the auth store. */
+async function saveTime(field: CheckinField, time: string | null, name: string): Promise<boolean> {
   try {
-    await saveMe({ checkinTime: time });
-    useAuthStore.getState().patchUser({ checkinTime: time });
+    await saveMe({ [field]: time });
+    useAuthStore.getState().patchUser({ [field]: time });
     haptic('success');
-    toast(time ? `Сохранено · сводка в ${time}` : 'Сохранено · сводка выключена');
+    toast(time ? `Сохранено · ${name} в ${time}` : `Сохранено · ${name} выключена`);
     return true;
   } catch {
     haptic('error');
     toast('Не удалось сохранить, попробуй ещё раз', { tone: 'error' });
     return false;
   }
+}
+
+/** Evening check-in in the bot. */
+export function saveCheckinTime(time: string | null): Promise<boolean> {
+  return saveTime('checkinTime', time, 'сводка');
+}
+
+/** Morning check-in with morning habits only. */
+export function saveMorningCheckinTime(time: string | null): Promise<boolean> {
+  return saveTime('morningCheckinTime', time, 'утренняя сводка');
 }
 
 const BANNER_KEY = 'checkinBannerDismissed';

@@ -17,7 +17,8 @@ interface HabitsState {
   /** Archive / restore (optimistic; rolls back on error). */
   setArchived: (id: number, archived: boolean) => Promise<boolean>;
   removeHabit: (id: number) => Promise<void>;
-  toggleEntry: (habitId: number, date: string, value: number) => Promise<void>;
+  /** `skipped: true` stores a pass for the day (value 0); value > 0 clears a skip; 0 alone deletes. */
+  toggleEntry: (habitId: number, date: string, value: number, skipped?: boolean) => Promise<void>;
 }
 
 /** Replaces (or removes, when `entry` is undefined) one habit's entry for `date`. */
@@ -127,19 +128,24 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
     }
   },
 
-  toggleEntry: (habitId, date, value) => {
+  toggleEntry: (habitId, date, value, skipped = false) => {
     const key = `${habitId}:${date}`;
     const seq = ++writeSeq;
     latestWrite.set(key, seq);
 
     // Optimistic update; remember this cell's previous entry for a targeted rollback.
     const prevEntry = get().habits.find((h) => h.id === habitId)?.entries.find((e) => e.date === date);
-    const nextEntry = value === 0 ? undefined : prevEntry ? { ...prevEntry, value } : { id: -1, date, value };
+    const base = prevEntry ?? { id: -1, date, value: 0 };
+    const nextEntry: HabitEntry | undefined = skipped
+      ? { ...base, value: 0, skipped: true }
+      : value === 0
+        ? undefined
+        : { ...base, value, skipped: false };
     set((s) => ({ habits: withEntry(s.habits, habitId, date, nextEntry) }));
 
     const run = async () => {
       try {
-        await habitsApi.toggleEntry(habitId, date, value);
+        await habitsApi.toggleEntry(habitId, date, value, skipped);
       } catch (e: any) {
         // The last write of the chain failed: its `prevEntry` may itself be an unsaved optimistic
         // value (several failed taps in a row), so roll back and then re-sync with the server.

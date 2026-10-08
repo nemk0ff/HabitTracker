@@ -182,7 +182,7 @@ export async function getUserDetail(userId: number): Promise<UserDetail | null> 
   if (!user) return null;
 
   const [entryCount, lastEvent, topEventRows] = await Promise.all([
-    prisma.habitEntry.count({ where: { habit: { userId } } }),
+    prisma.habitEntry.count({ where: { skipped: false, habit: { userId } } }),
     prisma.analyticsEvent.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' },

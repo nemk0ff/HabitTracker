@@ -9,6 +9,7 @@ const CHECKIN_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 interface MeBody {
   checkinTime?: string | null;
+  morningCheckinTime?: string | null;
   onboarded?: boolean;
   tzOffset?: number;
 }
@@ -23,10 +24,17 @@ export async function meRoutes(app: FastifyInstance) {
     if (!body || typeof body !== 'object') {
       return reply.status(400).send({ error: 'Body is required' });
     }
-    const { checkinTime, onboarded, tzOffset } = body;
+    const { checkinTime, morningCheckinTime, onboarded, tzOffset } = body;
 
     if (checkinTime !== undefined && checkinTime !== null && !(typeof checkinTime === 'string' && CHECKIN_RE.test(checkinTime))) {
       return reply.status(400).send({ error: 'Invalid checkinTime. Use HH:MM (00:00–23:59) or null' });
+    }
+    if (
+      morningCheckinTime !== undefined &&
+      morningCheckinTime !== null &&
+      !(typeof morningCheckinTime === 'string' && CHECKIN_RE.test(morningCheckinTime))
+    ) {
+      return reply.status(400).send({ error: 'Invalid morningCheckinTime. Use HH:MM (00:00–23:59) or null' });
     }
     if (onboarded !== undefined && typeof onboarded !== 'boolean') {
       return reply.status(400).send({ error: 'Invalid onboarded' });
@@ -43,6 +51,7 @@ export async function meRoutes(app: FastifyInstance) {
       where: { id: userId },
       data: {
         ...(checkinTime !== undefined ? { checkinTime } : {}),
+        ...(morningCheckinTime !== undefined ? { morningCheckinTime } : {}),
         ...(tzOffset !== undefined ? { tzOffset } : {}),
         ...(firstOnboarding ? { onboardedAt: new Date() } : {}),
       },
@@ -53,6 +62,10 @@ export async function meRoutes(app: FastifyInstance) {
     }
     if (checkinTime !== undefined) {
       track({ userId, event: 'checkin_time_set', category: 'miniapp', label: checkinTime ?? 'off' });
+    }
+
+    if (morningCheckinTime !== undefined) {
+      track({ userId, event: 'morning_checkin_time_set', category: 'miniapp', label: morningCheckinTime ?? 'off' });
     }
 
     return { ok: true };

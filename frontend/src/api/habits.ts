@@ -56,14 +56,19 @@ export function deleteHabit(id: number): Promise<void> {
   return api(`/api/habits/${id}`, { method: 'DELETE' });
 }
 
+/**
+ * Upserts a day: `value > 0` marks (and clears a skip), `value 0` deletes,
+ * `skipped: true` (with value 0) stores a pass that keeps the streak (overrides a mark).
+ */
 export function toggleEntry(
   habitId: number,
   date: string,
   value: number,
+  skipped = false,
 ): Promise<HabitEntry | { deleted: boolean; date: string }> {
   return api(`/api/habits/${habitId}/entries`, {
     method: 'POST',
-    body: JSON.stringify({ date, value }),
+    body: JSON.stringify(skipped ? { date, value: 0, skipped: true } : { date, value }),
   });
 }
 

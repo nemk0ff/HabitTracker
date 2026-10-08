@@ -1,9 +1,9 @@
 import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Pause } from 'lucide-react';
 import { haptic } from '../hooks/useTelegramButtons';
 import { readableOn } from '../utils/colors';
-import { formatHours, isCountHabit, isDoneValue, isHoursHabit, pluralDays, weekProgress } from '../utils/habits';
+import { formatHours, isCountHabit, isDoneValue, isHoursHabit, isSkippedOn, pluralDays, weekProgress } from '../utils/habits';
 import { streaks } from '../utils/habitStats';
 import { countTarget } from '../utils/habitActions';
 import type { Habit } from '../types';
@@ -13,11 +13,15 @@ interface TileProps {
   date: string;
   onTap: (habit: Habit) => void;
   onOpen: (id: number) => void;
+  /** Long press: actions sheet (open / skip / unmark). Without it a long press opens the habit. */
+  onMenu?: (habit: Habit) => void;
 }
 
-export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }: TileProps) {
+export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen, onMenu }: TileProps) {
   const entry = habit.entries.find((e) => e.date === date && e.value > 0);
   const done = !!entry && isDoneValue(habit, entry.value);
+  // A pass for the day (ill / vacation): muted tile with ⏸, the streak is kept.
+  const skipped = !entry && isSkippedOn(habit, date);
   const hours = isHoursHabit(habit);
   const count = isCountHabit(habit);
   const countValue = count ? (entry?.value ?? 0) : 0;
@@ -25,7 +29,6 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
   const week = weekProgress(habit, date);
   // On a filled tile the ink is black or white by the habit colour's brightness (white on yellow is unreadable).
   const ink = done ? readableOn(habit.color) : 'var(--tg-theme-text-color)';
-  const weekTarget = habit.weeklyTarget ? week.target : 7;
   // Daily habits show the run of days; weekly-goal ones already show "N из M в нед.".
   const streak = useMemo(
     () => (habit.weeklyTarget ? 0 : streaks(habit).current),
@@ -33,16 +36,19 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
   );
   const label =
     `${habit.name}: ` +
-    (count
+    (skipped
+      ? 'пропуск, серия сохранится'
+      : count
       ? `${countValue} из ${target}${done ? ', выполнено' : '. Нажми, чтобы добавить 1'}`
       : done
         ? 'отмечено'
         : 'не отмечено') +
     (hours && done ? `, ${formatHours(entry!.value)}` : '') +
-    `. На этой неделе ${week.done} из ${weekTarget}` +
+    `. На этой неделе ${week.done} из ${week.needed}` +
     (streak >= 2 ? `. Серия ${pluralDays(streak)}` : '');
 
-  // Long press (450 ms, cancelled by moving the finger) opens the habit; the tap that ends it doesn't mark.
+  // Long press (450 ms, cancelled by moving the finger) opens the actions sheet (or the habit);
+  // the tap that ends it doesn't mark.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pressStart = useRef<{ x: number; y: number } | null>(null);
   const longPressed = useRef(false);
@@ -65,7 +71,8 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
             pressTimer.current = null;
             longPressed.current = true;
             haptic('medium');
-            onOpen(habit.id);
+            if (onMenu) onMenu(habit);
+            else onOpen(habit.id);
           }, 450);
         }}
         onPointerMove={(e) => {
@@ -89,7 +96,12 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
         style={{
           backgroundColor: done ? habit.color : 'var(--tg-theme-section-bg-color)',
           color: ink,
-          boxShadow: done ? undefined : `inset 0 0 0 1.5px ${habit.color}55`,
+          boxShadow: done
+            ? undefined
+            : skipped
+              ? 'inset 0 0 0 1.5px color-mix(in srgb, var(--tg-theme-hint-color) 35%, transparent)'
+              : `inset 0 0 0 1.5px ${habit.color}55`,
+          opacity: skipped ? 0.7 : undefined,
         }}
       >
         <span className="flex items-center gap-1.5 pr-6" aria-hidden>
@@ -98,7 +110,9 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
               {habit.icon ?? '•'}
             </ProgressRing>
           ) : (
-            <span className="text-2xl leading-none">{habit.icon ?? '•'}</span>
+            <span className="text-2xl leading-none" style={skipped ? { filter: 'grayscale(1)' } : undefined}>
+              {habit.icon ?? '•'}
+            </span>
           )}
           {streak >= 2 && <span className="text-xs font-semibold whitespace-nowrap">🔥 {streak}</span>}
         </span>
@@ -112,9 +126,13 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
           {hours && done && <span className="block font-display text-base leading-tight">{formatHours(entry!.value)}</span>}
           <span className="block text-sm font-medium leading-tight line-clamp-2">{habit.name}</span>
           {/* This week at a glance: "2 из 3" for weekly goals, seven day dots for daily habits */}
-          {habit.weeklyTarget ? (
+          {skipped ? (
+            <span className="flex items-center gap-1 text-xs mt-1 whitespace-nowrap text-tg-hint">
+              <Pause size={12} aria-hidden /> пропуск
+            </span>
+          ) : habit.weeklyTarget ? (
             <span className="block text-xs mt-1 whitespace-nowrap" style={{ opacity: 0.85 }}>
-              {week.done} из {week.target} в нед.
+              {week.done} из {week.needed} в нед.
             </span>
           ) : (
             <span className="flex gap-[3px] mt-1.5">
@@ -125,7 +143,10 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }:
                   style={
                     d.done
                       ? { backgroundColor: done ? ink : habit.color }
-                      : // Empty day: an outline ring (not a faint fill), dimmer for days still ahead.
+                      : d.skipped
+                        ? // Skipped day: a dashed ring — kept apart from both done and missed.
+                          { border: '1px dashed currentColor', opacity: 0.6 }
+                        : // Empty day: an outline ring (not a faint fill), dimmer for days still ahead.
                         { boxShadow: `inset 0 0 0 ${d.future ? 1 : 1.5}px currentColor`, opacity: d.future ? 0.7 : 0.85 }
                   }
                 />

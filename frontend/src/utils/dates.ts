@@ -120,45 +120,42 @@ export function getRecentDays(count: number): Date[] {
  */
 export function calculateStreak(
   entries: { date: string; value: number }[],
+  /** Skipped days (ill / vacation): transparent — they neither break nor extend a run. */
+  skipped: Iterable<string> = [],
 ): { current: number; best: number } {
-  if (entries.length === 0) return { current: 0, best: 0 };
-
   const dateSet = new Set(
     entries.filter((e) => e.value > 0).map((e) => e.date),
   );
+  if (dateSet.size === 0) return { current: 0, best: 0 };
+  const skipSet = new Set(Array.from(skipped).filter((d) => !dateSet.has(d)));
 
   const today = new Date();
   const todayStr = toDateString(today);
-  const yesterdayStr = toDateString(subDays(today, 1));
 
+  // Walk back from today: done days count, skipped days are stepped over, anything else ends
+  // the run — except today, which may simply not be marked yet.
   let current = 0;
-  let startDate = dateSet.has(todayStr) ? today : dateSet.has(yesterdayStr) ? subDays(today, 1) : null;
-
-  if (startDate) {
-    let d = startDate;
-    while (dateSet.has(toDateString(d))) {
-      current++;
-      d = subDays(d, 1);
-    }
+  let d = dateSet.has(todayStr) || skipSet.has(todayStr) ? today : subDays(today, 1);
+  for (;;) {
+    const s = toDateString(d);
+    if (dateSet.has(s)) current++;
+    else if (!skipSet.has(s)) break;
+    d = subDays(d, 1);
   }
 
-  const sortedDates = Array.from(dateSet).sort();
+  const sortedDates = Array.from(new Set([...dateSet, ...skipSet])).sort();
   let best = 0;
   let streak = 0;
 
   for (let i = 0; i < sortedDates.length; i++) {
-    if (i === 0) {
-      streak = 1;
-    } else {
+    const date = sortedDates[i]!;
+    if (i > 0) {
       // parseISO = local midnight (new Date('YYYY-MM-DD') is UTC and can shift across DST).
       const prev = parseISO(sortedDates[i - 1]!);
-      const curr = parseISO(sortedDates[i]!);
-      if (differenceInCalendarDays(curr, prev) === 1) {
-        streak++;
-      } else {
-        streak = 1;
-      }
+      const curr = parseISO(date);
+      if (differenceInCalendarDays(curr, prev) !== 1) streak = 0;
     }
+    if (dateSet.has(date)) streak++;
     best = Math.max(best, streak);
   }
 

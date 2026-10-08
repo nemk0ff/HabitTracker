@@ -9,7 +9,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   authenticate: (initData: string) => Promise<void>;
-  /** Merges locally saved settings (checkinTime, onboarded) into the current user. */
+  /** Merges locally saved settings (checkinTime, morningCheckinTime, onboarded) into the current user. */
   patchUser: (patch: Partial<User>) => void;
 }
 

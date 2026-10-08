@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Check, ChevronRight, Flame } from 'lucide-react';
 import { MiniHeatmap } from './MiniHeatmap';
 import { toDateString } from '../utils/dates';
+import { countTarget } from '../utils/habitActions';
 import { useNavStore } from '../stores/navStore';
 import { formatHours, isCountHabit, isDoneValue, isHoursHabit, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
 import { averageValue, completionRate, formatNumber, habitStartDate, metWeekStarts, streaks, valueOn } from '../utils/habitStats';
@@ -22,24 +23,35 @@ interface CardStats {
   done: boolean;
   /** Plain done/not-done habit: the chip gets a ✓ when done and a muted outline when not. */
   mark: boolean;
-  /** Stats line parts, joined with « · ». The streak part (if any) gets the flame icon. */
-  flame: number | null;
-  parts: string[];
+  /** Headline number of the stats column: «80%», «2/3», «3/8», «7,2 ч». */
+  big: string;
+  /** What the headline means: «за 30 дней», «на неделе»... */
+  caption: string;
+  /** Current run with the flame icon («5» or «3 нед.»); null hides it. */
+  flame: string | null;
+  /** One small extra line, e.g. «рекорд 12». */
+  extra: string | null;
 }
 
 function computeStats(h: Habit, today: string): CardStats {
   const value = valueOn(h, today);
   const done = isDoneValue(h, value);
+  const { current, best } = streaks(h);
+  const flame = current > 0 ? String(current) : null;
+  const record = best > current ? `рекорд ${best}` : null;
 
   if (isCountHabit(h)) {
-    const target = Math.max(1, h.dailyTarget ?? 1);
     const avg = averageValue(h, WINDOW_DAYS, today);
+    const rate = completionRate(h, WINDOW_DAYS, today);
     return {
-      chip: `${value}/${target}`,
+      // Today's progress lives in the chip; the big number is the 30-day hit rate.
+      chip: `${value}/${countTarget(h)}`,
       done,
       mark: false,
-      flame: null,
-      parts: [`сегодня ${value}/${target}`, ...(avg !== null ? [`в среднем ${formatNumber(avg)}`] : [])],
+      big: rate !== null ? `${rate}%` : '—',
+      caption: 'дней с целью',
+      flame,
+      extra: avg !== null ? `в среднем ${formatNumber(avg)}` : record,
     };
   }
 
@@ -49,29 +61,38 @@ function computeStats(h: Habit, today: string): CardStats {
       chip: value > 0 ? formatHours(value) : '—',
       done,
       mark: false,
+      big: avg !== null ? formatHours(avg) : '—',
+      caption: 'в среднем',
       flame: null,
-      parts: [`сегодня ${value > 0 ? formatHours(value) : '—'}`, ...(avg !== null ? [`в среднем ${formatHours(avg)}`] : [])],
+      extra: avg !== null ? `за ${WINDOW_DAYS} дней` : null,
     };
   }
 
   if (h.weeklyTarget) {
     const week = weekProgress(h, today);
     const run = weeklyStreak(h, today);
+    const rate = completionRate(h, WINDOW_DAYS, today);
     return {
       chip: done ? 'сегодня' : 'не отмечено',
       done,
       mark: true,
-      flame: null,
-      parts: [`${week.done} из ${week.target} на этой неделе`, ...(run > 0 ? [`${run} нед. подряд`] : [])],
+      big: `${week.done}/${week.needed}`,
+      caption: 'на неделе',
+      flame: run > 0 ? `${run} нед.` : null,
+      extra: run === 0 && rate ? `${rate}% за ${WINDOW_DAYS} дн.` : null,
     };
   }
 
-  const { current, best } = streaks(h);
   const rate = completionRate(h, WINDOW_DAYS, today);
-  const parts: string[] = [];
-  if (best > current) parts.push(`рекорд ${best}`);
-  if (rate !== null && (rate > 0 || current > 0 || best > 0)) parts.push(`${rate}% за ${WINDOW_DAYS} дней`);
-  return { chip: done ? 'сегодня' : 'не отмечено', done, mark: true, flame: current > 0 ? current : null, parts };
+  return {
+    chip: done ? 'сегодня' : 'не отмечено',
+    done,
+    mark: true,
+    big: rate !== null ? `${rate}%` : '—',
+    caption: `за ${WINDOW_DAYS} дней`,
+    flame,
+    extra: record ?? (h.entries.length === 0 ? 'начни сегодня' : null),
+  };
 }
 
 export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Props) {
@@ -88,7 +109,13 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
   const accentText = legibleColor(habit.color, isDark);
   const onColor = readableOn(habit.color);
 
-  const statsText = [stats.flame !== null ? `серия ${stats.flame}` : null, ...stats.parts].filter(Boolean).join(', ');
+  const statsText = [
+    `${stats.big} ${stats.caption}`,
+    stats.flame !== null ? `серия ${stats.flame}` : null,
+    stats.extra,
+  ]
+    .filter(Boolean)
+    .join(', ');
   const stateText = stats.done ? 'сегодня выполнено' : 'сегодня не выполнено';
 
   const open = () => navigate('habit', { selectedHabitId: habit.id });
@@ -125,7 +152,7 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
         >
           {habit.icon || '•'}
         </span>
-        <span className="flex-1 min-w-0 font-semibold text-tg-text text-base leading-snug break-words line-clamp-2">
+        <span className="flex-1 min-w-0 font-semibold text-tg-text text-base leading-snug truncate">
           {habit.name}
         </span>
         <TodayChip
@@ -142,27 +169,35 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
         {!readOnly && <ChevronRight size={18} className="text-tg-hint -mr-1 shrink-0" aria-hidden />}
       </div>
 
-      {/* Full-width history */}
-      <div className="mt-3">
-        <MiniHeatmap entries={heatEntries} color={habit.color} startDate={startDate} metWeekStarts={metWeeks} />
+      {/* Body: stats on the left, history fills the rest */}
+      <div className="mt-3 flex items-start gap-3">
+        <div className="w-[76px] shrink-0 flex flex-col" aria-hidden>
+          <span
+            className="text-[22px] leading-none font-semibold tabular-nums tracking-tight whitespace-nowrap"
+            style={{ color: stats.big === '—' ? 'var(--hint-strong)' : accentText }}
+          >
+            {stats.big}
+          </span>
+          <span className="mt-1 text-xs leading-tight text-tg-hint">{stats.caption}</span>
+          {stats.flame !== null && (
+            <span
+              className="mt-2.5 inline-flex items-center gap-1 text-[13px] leading-none font-semibold whitespace-nowrap"
+              style={{ color: accentText }}
+            >
+              <Flame size={13} fill="currentColor" strokeWidth={1.5} aria-hidden />
+              {stats.flame}
+            </span>
+          )}
+          {stats.extra && (
+            <span className={`${stats.flame !== null ? 'mt-1.5' : 'mt-2.5'} text-xs leading-tight text-hint-strong`}>
+              {stats.extra}
+            </span>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <MiniHeatmap entries={heatEntries} color={habit.color} startDate={startDate} metWeekStarts={metWeeks} />
+        </div>
       </div>
-
-      {/* Stats line */}
-      <p className="mt-2.5 text-sm text-hint-strong flex items-center flex-wrap gap-x-1.5 leading-snug">
-        {stats.flame !== null && (
-          <span className="inline-flex items-center gap-0.5 font-semibold" style={{ color: accentText }}>
-            <Flame size={14} fill="currentColor" strokeWidth={1.5} aria-hidden />
-            {stats.flame}
-          </span>
-        )}
-        {stats.parts.map((p, i) => (
-          <span key={p}>
-            {(i > 0 || stats.flame !== null) && <span aria-hidden>· </span>}
-            {p}
-          </span>
-        ))}
-        {stats.flame === null && stats.parts.length === 0 && <span>Пока без отметок — начни сегодня</span>}
-      </p>
     </motion.div>
   );
 });

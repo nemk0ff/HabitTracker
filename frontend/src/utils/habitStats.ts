@@ -1,6 +1,6 @@
-import { parseISO, startOfWeek } from 'date-fns';
+import { differenceInCalendarDays, parseISO, startOfWeek } from 'date-fns';
 import { calculateStreak, shiftDate, toDateString } from './dates';
-import { doneEntries } from './habits';
+import { doneEntries, neededForWeek, skippedDates } from './habits';
 import type { Habit } from '../types';
 
 /** Pure per-habit numbers for the Progress card. `today` is a local YYYY-MM-DD. */
@@ -20,9 +20,9 @@ export function habitStartDate(h: Pick<Habit, 'createdAt' | 'entries'>): string 
   return start;
 }
 
-/** Current and best daily streaks over done days only. */
+/** Current and best daily streaks over done days; skipped days are transparent (no break, no +1). */
 export function streaks(h: Habit): { current: number; best: number } {
-  return calculateStreak(doneEntries(h));
+  return calculateStreak(doneEntries(h), skippedDates(h));
 }
 
 export function bestStreak(h: Habit): number {
@@ -30,18 +30,24 @@ export function bestStreak(h: Habit): number {
 }
 
 /**
- * Share of done days (0–100) within the last `days` days, never counting days before the
- * habit's start (`habitStartDate`). Null when the window is empty.
+ * Share of done days (0–100) from `from` through `to`, never counting days before the habit's
+ * start (`habitStartDate`). Skipped days are left out of the window (a pass is neither done nor
+ * missed). Null when the window is empty. Count habits: "done" means the daily target was met.
  */
-export function completionRate(h: Habit, days: number, today: string): number | null {
-  const created = habitStartDate(h);
-  const windowStart = shiftDate(today, -(days - 1));
-  const from = created > windowStart ? created : windowStart;
-  if (from > today) return null;
-  const total = Math.round((parseISO(today).getTime() - parseISO(from).getTime()) / 86_400_000) + 1;
+export function rateBetween(h: Habit, from: string, to: string): number | null {
+  const start = habitStartDate(h);
+  const first = start > from ? start : from;
+  if (first > to) return null;
+  const done = new Set(doneEntries(h).filter((e) => e.date >= first && e.date <= to).map((e) => e.date));
+  const skipped = [...skippedDates(h)].filter((d) => d >= first && d <= to && !done.has(d)).length;
+  const total = differenceInCalendarDays(parseISO(to), parseISO(first)) + 1 - skipped;
   if (total <= 0) return null;
-  const done = new Set(doneEntries(h).filter((e) => e.date >= from && e.date <= today).map((e) => e.date)).size;
-  return Math.round((done / total) * 100);
+  return Math.round((done.size / total) * 100);
+}
+
+/** `rateBetween` over the last `days` days ending `today`. */
+export function completionRate(h: Habit, days: number, today: string): number | null {
+  return rateBetween(h, shiftDate(today, -(days - 1)), today);
 }
 
 /** Mean `value` over the logged days (value > 0) within the last `days` days, or null. */
@@ -51,21 +57,35 @@ export function averageValue(h: Habit, days: number, today: string): number | nu
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 }
 
-/** Today's raw value (0 when nothing logged). */
+/** Today's raw value (0 when nothing logged or the day is skipped). */
 export function valueOn(h: Habit, date: string): number {
   return h.entries.find((e) => e.date === date)?.value ?? 0;
 }
 
-/** Monday (YYYY-MM-DD) of every week whose frequency goal was met. Empty for daily habits. */
+/**
+ * Monday (YYYY-MM-DD) of every week whose frequency goal was met: a week needs
+ * max(0, target − skipped days) done days, and at least one. Empty for daily habits.
+ */
 export function metWeekStarts(h: Habit): Set<string> {
   const met = new Set<string>();
   if (!h.weeklyTarget) return met;
+  const mondayOf = (date: string) => toDateString(startOfWeek(parseISO(date), { weekStartsOn: 1 }));
   const perWeek = new Map<string, number>();
+  const doneDates = new Set<string>();
   for (const e of doneEntries(h)) {
-    const monday = toDateString(startOfWeek(parseISO(e.date), { weekStartsOn: 1 }));
+    doneDates.add(e.date);
+    const monday = mondayOf(e.date);
     perWeek.set(monday, (perWeek.get(monday) ?? 0) + 1);
   }
-  for (const [monday, n] of perWeek) if (n >= h.weeklyTarget) met.add(monday);
+  const skippedPerWeek = new Map<string, number>();
+  for (const d of skippedDates(h)) {
+    if (doneDates.has(d)) continue;
+    const monday = mondayOf(d);
+    skippedPerWeek.set(monday, (skippedPerWeek.get(monday) ?? 0) + 1);
+  }
+  for (const [monday, n] of perWeek) {
+    if (n >= neededForWeek(h.weeklyTarget, skippedPerWeek.get(monday) ?? 0)) met.add(monday);
+  }
   return met;
 }
 

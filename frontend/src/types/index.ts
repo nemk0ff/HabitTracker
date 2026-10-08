@@ -1,7 +1,10 @@
 export interface HabitEntry {
   id: number;
   date: string; // YYYY-MM-DD
-  value: number; // 0-3
+  /** Level 1–4, minutes (hours habits) or a count (count habits). 0 only together with `skipped`. */
+  value: number;
+  /** A deliberate pass (ill / vacation): not done, but it does not break the streak. */
+  skipped?: boolean;
 }
 
 export type TimeOfDay = 'morning' | 'day' | 'evening';
@@ -43,6 +46,8 @@ export interface User {
   onboarded?: boolean;
   /** Evening check-in time, local HH:MM; null = no check-in message. */
   checkinTime?: string | null;
+  /** Optional second check-in in the morning with morning habits only (local HH:MM). */
+  morningCheckinTime?: string | null;
 }
 
 export interface AdminUserGroup {

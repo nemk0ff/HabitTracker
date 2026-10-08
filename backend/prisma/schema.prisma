@@ -20,6 +20,10 @@ model User {
   checkinTime   String?
   /// Local 'YYYY-MM-DD' of the last evening check-in sent (or skipped because everything was marked).
   lastCheckinDate String?
+  /// Local 'HH:MM' of the optional morning check-in (morning habits only); null = off.
+  morningCheckinTime String?
+  /// Local 'YYYY-MM-DD' of the last morning check-in sent (or skipped).
+  lastMorningCheckinDate String?
   onboardedAt   DateTime?
   habits        Habit[]
   events        AnalyticsEvent[]
@@ -94,6 +98,8 @@ model HabitEntry {
   habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
   date      DateTime
   value     Int      @default(1)
+  /// Day off (sick / vacation): value is 0, not done, and transparent for streaks.
+  skipped   Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@unique([habitId, date])

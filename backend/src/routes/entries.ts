@@ -7,12 +7,19 @@ import { isValidEntryValue, maxEntryValue, setHabitEntry } from '../services/hab
 export async function entriesRoutes(app: FastifyInstance) {
   app.addHook('onRequest', authGuard);
 
-  app.post<{ Params: { id: string }; Body: { date: string; value?: number } }>(
+  /**
+   * `{ date, value?, skipped? }`: `skipped: true` stores a day off (value 0, overrides any mark);
+   * value > 0 marks the day (clearing a skip); value 0 without `skipped` deletes the entry.
+   */
+  app.post<{ Params: { id: string }; Body: { date: string; value?: number; skipped?: boolean } }>(
     '/habits/:id/entries',
     async (request, reply) => {
       const { userId } = (request as any).user as JwtPayload;
       const habitId = Number(request.params.id);
-      const { date, value } = request.body;
+      const { date, value, skipped } = request.body ?? ({} as any);
+      if (skipped !== undefined && typeof skipped !== 'boolean') {
+        return reply.status(400).send({ error: 'skipped must be a boolean' });
+      }
 
       const habit = await prisma.habit.findFirst({
         where: { id: habitId, userId },
@@ -26,12 +33,12 @@ export async function entriesRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid date format. Use YYYY-MM-DD' });
       }
 
-      const entryValue = value ?? 1;
+      const entryValue = skipped ? 0 : (value ?? 1);
       if (!isValidEntryValue(habit, entryValue)) {
         return reply.status(400).send({ error: `value must be an integer 0..${maxEntryValue(habit)}` });
       }
 
-      const entry = await setHabitEntry(habit, entryDate, entryValue);
+      const entry = await setHabitEntry(habit, entryDate, entryValue, skipped === true);
       if (!entry) {
         track({ userId, event: 'entry_unchecked', category: 'miniapp', label: date });
         return { deleted: true, date };
@@ -39,7 +46,7 @@ export async function entriesRoutes(app: FastifyInstance) {
 
       track({
         userId,
-        event: 'entry_checked',
+        event: entry.skipped ? 'entry_skipped' : 'entry_checked',
         category: 'miniapp',
         label: date,
         metadata: { value: entryValue, habitId },
@@ -49,6 +56,7 @@ export async function entriesRoutes(app: FastifyInstance) {
         id: entry.id,
         date: entry.date.toISOString().split('T')[0],
         value: entry.value,
+        skipped: entry.skipped,
       };
     },
   );
@@ -82,6 +90,7 @@ export async function entriesRoutes(app: FastifyInstance) {
         id: e.id,
         date: e.date.toISOString().split('T')[0],
         value: e.value,
+        skipped: e.skipped,
       }));
     },
   );

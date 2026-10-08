@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { ChevronRight, Plus, Utensils, Scale, NotebookText, Settings } from 'lucide-react';
+import { ChevronRight, Plus, Utensils, Scale, NotebookText, Settings, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '../stores/authStore';
 import { useHabitsStore } from '../stores/habitsStore';
@@ -12,6 +12,7 @@ import { toast } from '../stores/toastStore';
 import { CheckinBanner } from '../components/CheckinBanner';
 import { EmptyHabits } from '../components/EmptyHabits';
 import { TodaySection } from '../components/TodaySection';
+import { HabitActionSheet } from '../components/HabitActionSheet';
 import { HoursSheet } from '../components/HoursSheet';
 import { WeightSheet } from '../components/nutrition/WeightSheet';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
@@ -22,15 +23,21 @@ import {
   TIME_OF_DAY,
   closedDaysStreak,
   isCountHabit,
+  isClosedOn,
   isDayClosed,
   isHoursHabit,
   isMarkedOn,
+  isReturningUser,
+  isSkippedOn,
   pluralDays,
   sortHabits,
 } from '../utils/habits';
 import { dismissCheckinBanner, isCheckinBannerDismissed, saveCheckinTime } from '../utils/checkin';
 import { incrementCount, setHabitValue, toggleHabitDay } from '../utils/habitActions';
 import type { Habit } from '../types';
+
+/** Time-of-day sections appear only from this many active habits (and with 2+ non-empty sections). */
+const MIN_HABITS_FOR_SECTIONS = 6;
 
 /**
  * Start screen: everything that is marked daily, without choosing a module first
@@ -58,19 +65,34 @@ export function TodayPage() {
   const showBanner = active.length > 0 && !checkinTime && !bannerHidden;
 
   const markedToday = active.filter((h) => isMarkedOn(h, today)).length;
+  // Skipped habits (ill / vacation) drop out of today's «N из M».
+  const dueToday = active.filter((h) => !isSkippedOn(h, today)).length;
+
+  // Soft return after a 3+ day break (plan §3.6): a welcome banner, dismissible for the day.
+  const returning = useMemo(() => isReturningUser(active, today), [active, today]);
+  const [returnDismissed, setReturnDismissed] = useState(() => isReturnBannerDismissed(today));
+  useEffect(() => setReturnDismissed(isReturnBannerDismissed(today)), [today]);
+  const showReturnBanner = returning && !returnDismissed;
+
+  // Long-pressed tile → actions sheet. Keep the id so the sheet sees live entries.
+  const [menuHabitId, setMenuHabitId] = useState<number | null>(null);
+  const menuHabit = habits.find((h) => h.id === menuHabitId) ?? null;
   const closed = useMemo(() => isDayClosed(active, today), [active, today]);
   const closedStreak = useMemo(() => (closed ? closedDaysStreak(active, today) : 0), [closed, active, today]);
 
-  // Morning / day / evening / any time; only non-empty ones are shown.
-  const sections = useMemo(
-    () =>
-      TIME_OF_DAY.map((t) => ({ ...t, habits: active.filter((h) => (h.timeOfDay ?? null) === t.key) })).filter(
-        (s) => s.habits.length > 0,
-      ),
-    [active],
-  );
+  // Morning / day / evening / any time; only non-empty ones are shown. With few habits, sections of
+  // 1–2 tiles leave most of a 3-column row empty and stretch the screen — so they only appear with
+  // ≥ 6 habits spread over ≥ 2 sections; otherwise one flat grid ordered by section, then sortOrder.
+  const sections = useMemo(() => {
+    const bySection = TIME_OF_DAY.map((t) => ({
+      ...t,
+      habits: active.filter((h) => (h.timeOfDay ?? null) === t.key),
+    })).filter((s) => s.habits.length > 0);
+    if (active.length >= MIN_HABITS_FOR_SECTIONS && bySection.length >= 2) return bySection;
+    return [{ key: null, label: 'Привычки', habits: bySection.flatMap((s) => s.habits) }];
+  }, [active]);
   const doneSections = sections
-    .filter((s) => s.habits.every((h) => isMarkedOn(h, today)))
+    .filter((s) => s.habits.every((h) => isClosedOn(h, today)))
     .map((s) => s.key ?? 'any')
     .join(',');
 
@@ -112,6 +134,7 @@ export function TodayPage() {
     [today],
   );
   const openHabit = useCallback((id: number) => navigate('habit', { selectedHabitId: id }), [navigate]);
+  const openMenu = useCallback((h: Habit) => setMenuHabitId(h.id), []);
 
   const addTile = (
     <motion.button
@@ -139,12 +162,14 @@ export function TodayPage() {
                 <div className="flex items-baseline gap-2">
                   {/* The habits count is the screen's big number unless the kcal block already holds that role. */}
                   <span
-                    className={nutrition ? 'text-2xl font-semibold leading-none' : 'font-display text-[36px] leading-none'}
+                    className={
+                      nutrition || dueToday === 0 ? 'text-2xl font-semibold leading-none' : 'font-display text-[36px] leading-none'
+                    }
                     style={{ color: closed ? 'var(--accent)' : 'var(--tg-theme-text-color)' }}
                   >
-                    {markedToday} из {active.length}
+                    {dueToday === 0 ? 'Сегодня пропуск' : `${markedToday} из ${dueToday}`}
                   </span>
-                  <span className="text-sm text-tg-hint">сегодня</span>
+                  {dueToday > 0 && <span className="text-sm text-tg-hint">сегодня</span>}
                 </div>
                 {closed && (
                   <p className="text-sm font-medium mt-1.5" style={{ color: 'var(--accent)' }}>
@@ -163,7 +188,28 @@ export function TodayPage() {
           </button>
         </div>
 
-        {showBanner && (
+        {showReturnBanner && (
+          <section
+            className="relative rounded-2xl p-4 pr-12 mb-5"
+            style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 9%, transparent)' }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                dismissReturnBanner(today);
+                setReturnDismissed(true);
+                haptic('select');
+              }}
+              aria-label="Скрыть"
+              className="absolute top-1 right-1 w-11 h-11 flex items-center justify-center text-tg-hint active:opacity-60"
+            >
+              <X size={18} aria-hidden />
+            </button>
+            <p className="text-base font-medium text-tg-text">С возвращением! Начнём с сегодня — серии не главное 🙂</p>
+          </section>
+        )}
+
+        {showBanner && !showReturnBanner && (
           <CheckinBanner
             onAccept={async () => {
               if (await saveCheckinTime('21:00')) setBannerHidden(true);
@@ -285,6 +331,7 @@ export function TodayPage() {
               showHeader={sections.length > 1}
               onTap={tapHabit}
               onOpen={openHabit}
+              onMenu={openMenu}
               trailing={i === sections.length - 1 ? addTile : undefined}
             />
           ))
@@ -301,6 +348,7 @@ export function TodayPage() {
           onSave={(m) => setHabitValue(hoursHabit, today, m)}
         />
       )}
+      <HabitActionSheet habit={menuHabit} date={today} onClose={() => setMenuHabitId(null)} onOpen={openHabit} />
       <WeightSheet
         open={weightOpen}
         initialKg={plan?.weightKg ?? plan?.lastWeightKg ?? null}
@@ -309,4 +357,23 @@ export function TodayPage() {
       />
     </motion.div>
   );
+}
+
+const RETURN_BANNER_KEY = 'returnBannerDismissed';
+
+/** The welcome-back banner was closed today (storage may be unavailable — then it just shows). */
+function isReturnBannerDismissed(today: string): boolean {
+  try {
+    return localStorage.getItem(RETURN_BANNER_KEY) === today;
+  } catch {
+    return false;
+  }
+}
+
+function dismissReturnBanner(today: string) {
+  try {
+    localStorage.setItem(RETURN_BANNER_KEY, today);
+  } catch {
+    /* private mode: the banner is hidden for this session only */
+  }
 }

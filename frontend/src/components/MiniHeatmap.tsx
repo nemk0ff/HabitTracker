@@ -3,6 +3,7 @@ import { addDays, differenceInCalendarDays, differenceInCalendarWeeks, format, p
 import { ru } from 'date-fns/locale';
 import { getWeeksGrid, toDateString } from '../utils/dates';
 import { getHeatmapColor, getEmptyColor } from '../utils/colors';
+import { skipHatch } from '../utils/habits';
 import type { HabitEntry } from '../types';
 
 interface Props {
@@ -67,6 +68,8 @@ export const MiniHeatmap = memo(function MiniHeatmap({ entries, color, startDate
   const { weeks, cell } = layout(width, historyWeeks);
 
   const entryMap = useMemo(() => new Map(entries.map((e) => [e.date, e.value])), [entries]);
+  // Skipped days (ill / vacation) are hatched, not empty — they aren't misses.
+  const skippedSet = useMemo(() => new Set(entries.filter((e) => e.skipped).map((e) => e.date)), [entries]);
 
   const columns = useMemo(() => {
     const { weeks: grid } = getWeeksGrid(weeks);
@@ -106,7 +109,7 @@ export const MiniHeatmap = memo(function MiniHeatmap({ entries, color, startDate
   if (compact && startDate) {
     return (
       <div ref={ref} className="select-none w-full" aria-hidden="true">
-        <WeekStrip entryMap={entryMap} color={color} startDate={startDate} today={todayStr} width={width} />
+        <WeekStrip entryMap={entryMap} skippedSet={skippedSet} color={color} startDate={startDate} today={todayStr} width={width} />
       </div>
     );
   }
@@ -132,14 +135,17 @@ export const MiniHeatmap = memo(function MiniHeatmap({ entries, color, startDate
               if (!day) return <div key={di} style={{ width: cell, height: cell }} />;
               const value = entryMap.get(day.date) ?? 0;
               const isTodayCell = day.date === todayStr;
+              const skipped = value <= 0 && skippedSet.has(day.date);
               return (
                 <div
                   key={di}
+                  title={skipped ? 'пропуск' : undefined}
                   style={{
                     width: cell,
                     height: cell,
                     borderRadius: radius,
                     backgroundColor: value > 0 ? getHeatmapColor(color, value) : getEmptyColor(),
+                    backgroundImage: skipped ? skipHatch(color, 1.5, cell >= 14 ? 3.5 : 2.5) : undefined,
                     outline: isTodayCell ? `1.5px solid ${color}` : undefined,
                     outlineOffset: isTodayCell ? 1 : undefined,
                   }}
@@ -169,12 +175,14 @@ export const MiniHeatmap = memo(function MiniHeatmap({ entries, color, startDate
  */
 function WeekStrip({
   entryMap,
+  skippedSet,
   color,
   startDate,
   today,
   width,
 }: {
   entryMap: Map<string, number>;
+  skippedSet: Set<string>;
   color: string;
   startDate: string;
   today: string;
@@ -195,14 +203,17 @@ function WeekStrip({
             if (date < startDate) return <div key={date} style={{ width: cell, height: cell }} />;
             const value = entryMap.get(date) ?? 0;
             const isToday = date === today;
+            const skipped = value <= 0 && skippedSet.has(date);
             return (
               <div
                 key={date}
+                title={skipped ? 'пропуск' : undefined}
                 style={{
                   width: cell,
                   height: cell,
                   borderRadius: 6,
                   backgroundColor: value > 0 ? getHeatmapColor(color, value) : getEmptyColor(),
+                  backgroundImage: skipped ? skipHatch(color) : undefined,
                   opacity: date > today ? 0.4 : 1,
                   outline: isToday ? `2px solid ${color}` : undefined,
                   outlineOffset: isToday ? 1 : undefined,

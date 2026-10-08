@@ -15,7 +15,7 @@ import { hasNutritionAccess } from '../../utils/features.js';
 import { forEachSafe } from '../../utils/safe.js';
 import { track } from '../analytics.js';
 import { computePlan } from './model.js';
-import { isDone } from '../habitStats.js';
+import { countTarget, isDone } from '../habitStats.js';
 
 const WEBAPP_URL = process.env.WEBAPP_URL || '';
 const SLEEP_HOURS = [5, 6, 7, 8, 9];
@@ -111,7 +111,8 @@ export async function sendTrainingPrompt(): Promise<void> {
     const habit = await prisma.habit.findFirst({ where: { id: g.trainingHabitId, userId: g.userId, archived: false } });
     if (!habit) return; // archived (or gone) — don't ask about a habit the user put away
     const entry = await prisma.habitEntry.findFirst({ where: { habitId: habit.id, date: dayDate(date) } });
-    if (isDone(habit, entry?.value)) return;
+    // A pass (ill / vacation) — don't ask about a workout today.
+    if (entry?.skipped || isDone(habit, entry?.value)) return;
     await send(g.user.telegramId, '💪 Была сегодня тренировка?', [
       [
         { text: 'Да', callback_data: `tr:${date}:1` },
@@ -186,7 +187,7 @@ export async function handlePromptCallback(ctx: Context, data: string): Promise<
     if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) return reject('Странное время сна');
     await prisma.habitEntry.upsert({
       where: { habitId_date: { habitId: goal.sleepHabitId, date: d } },
-      update: { value: minutes },
+      update: { value: minutes, skipped: false },
       create: { habitId: goal.sleepHabitId, date: d, value: minutes },
     });
     track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { prompt: 'sleep' } });
@@ -209,11 +210,11 @@ export async function handlePromptCallback(ctx: Context, data: string): Promise<
       if (!habit) return reject('Привычка не найдена');
       // «Да» means the training happened: a count habit gets its daily target, so it counts as done.
       const existing = await prisma.habitEntry.findUnique({ where: { habitId_date: { habitId: habit.id, date: d } } });
-      const doneValue = habit.measure === 'count' ? Math.max(1, habit.dailyTarget ?? 1) : 1;
+      const doneValue = habit.measure === 'count' ? countTarget(habit) : 1;
       const newValue = isDone(habit, existing?.value) ? existing!.value : doneValue;
       await prisma.habitEntry.upsert({
         where: { habitId_date: { habitId: habit.id, date: d } },
-        update: { value: newValue },
+        update: { value: newValue, skipped: false },
         create: { habitId: habit.id, date: d, value: newValue },
       });
       track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { prompt: 'training' } });

@@ -80,6 +80,7 @@ export async function authRoutes(app: FastifyInstance) {
         isAdmin: DEVELOPER_CHAT_ID !== '' && telegramUser.id.toString() === DEVELOPER_CHAT_ID,
         onboarded: user.onboardedAt !== null,
         checkinTime: user.checkinTime,
+        morningCheckinTime: user.morningCheckinTime,
         features: {
           nutrition: hasNutritionAccess(telegramUser.id),
           agentLog: hasAgentLogAccess(telegramUser.id),

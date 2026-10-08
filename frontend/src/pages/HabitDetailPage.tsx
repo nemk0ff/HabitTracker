@@ -8,16 +8,17 @@ import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButton
 import { Heatmap } from '../components/Heatmap';
 import { StatCard } from '../components/StatCard';
 import { NotificationSheet, utcTimeToLocal } from '../components/NotificationSheet';
-import { getMonthCompletionRate } from '../utils/dates';
 import { fetchReminder, saveReminder } from '../api/habits';
 import { HoursSheet } from '../components/HoursSheet';
-import { doneEntries, formatHours, isCountHabit, isHoursHabit, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
+import { formatHours, isCountHabit, isHoursHabit, isReturningUser, isSkippedOn, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
 import { averageValue, formatNumber, streaks, valueOn } from '../utils/habitStats';
-import { countTarget } from '../utils/habitActions';
 import { toDateString } from '../utils/dates';
 import { HabitDaySheet } from '../components/HabitDaySheet';
 import { SleepChart } from '../components/SleepChart';
-import { setHabitValue } from '../utils/habitActions';
+import { CountChart } from '../components/CountChart';
+import { MonthSummary } from '../components/MonthSummary';
+import { monthSummary } from '../utils/habitInsights';
+import { countTarget, setHabitSkipped, setHabitValue } from '../utils/habitActions';
 import type { Reminder, DayOfWeek } from '../types';
 
 const HOURS_LEVEL_LABELS = ['меньше 5 ч', '5–7 ч', '7+ ч'];
@@ -28,6 +29,7 @@ export function HabitDetailPage() {
   );
   const habit = useHabitsStore((s) => s.habits.find((h) => h.id === selectedHabitId));
   const removeHabit = useHabitsStore((s) => s.removeHabit);
+  const allHabits = useHabitsStore((s) => s.habits);
   const [showConfirm, setShowConfirm] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [reminder, setReminder] = useState<Reminder | null>(null);
@@ -64,11 +66,13 @@ export function HabitDetailPage() {
 
   const { current, best } = streaks(habit);
   const now = new Date();
-  const completionRate = getMonthCompletionRate(doneEntries(habit), now.getFullYear(), now.getMonth());
-
   const hours = isHoursHabit(habit);
+  const count = isCountHabit(habit);
   const reminderOn = !!reminder?.enabled && reminder.days.length > 0;
   const today = toDateString(now);
+  // Same numbers as the «Этот месяц» card: days before the habit started and passes don't count.
+  const monthRate = monthSummary(habit, today).rate;
+  const monthRateText = monthRate !== null ? `${monthRate}%` : '—';
   const avg7 = hours ? averageValue(habit, 7, today) : null;
   const week = weekProgress(habit, today);
 
@@ -77,29 +81,33 @@ export function HabitDetailPage() {
 
   // Weekly-goal habits are judged by weeks, daily ones by days in a row.
   const avg30 = averageValue(habit, 30, today);
-  const stats: { label: string; value: string | number }[] = isCountHabit(habit)
+  const stats: { label: string; value: string | number; streak?: boolean }[] = count
     ? [
         { label: 'Сегодня', value: `${valueOn(habit, today)}/${countTarget(habit)}` },
-        { label: 'Дней подряд', value: current },
+        { label: 'Дней подряд', value: current, streak: true },
         { label: 'Среднее за 30 дн', value: avg30 !== null ? formatNumber(avg30) : '—' },
       ]
     : hours
     ? [
-        { label: 'Дней подряд', value: current },
+        { label: 'Дней подряд', value: current, streak: true },
         { label: 'Рекорд, дней', value: best },
         { label: 'Среднее за 7 дн', value: avg7 !== null ? formatHours(avg7) : '—' },
       ]
     : habit.weeklyTarget
       ? [
-          { label: 'Эта неделя', value: `${week.done} из ${week.target}` },
-          { label: 'Недель подряд', value: weeklyStreak(habit, today) },
-          { label: 'За месяц', value: `${completionRate}%` },
+          { label: 'Эта неделя', value: `${week.done} из ${week.needed}` },
+          { label: 'Недель подряд', value: weeklyStreak(habit, today), streak: true },
+          { label: 'За месяц', value: monthRateText },
         ]
       : [
-          { label: 'Дней подряд', value: current },
+          { label: 'Дней подряд', value: current, streak: true },
           { label: 'Рекорд, дней', value: best },
-          { label: 'За месяц', value: `${completionRate}%` },
+          { label: 'За месяц', value: monthRateText },
         ];
+
+  // After a break a row of zeros only discourages: show just the numbers that carry good news.
+  const returning = isReturningUser(allHabits, today);
+  const visibleStats = returning ? stats.filter((s) => !(s.streak && s.value === 0)) : stats;
 
   const handleDelete = async () => {
     await removeHabit(habit.id);
@@ -141,7 +149,7 @@ export function HabitDetailPage() {
 
         {/* Stats */}
         <div className="flex gap-2 mb-3">
-          {stats.map((s) => (
+          {visibleStats.map((s) => (
             <StatCard key={s.label} label={s.label} value={s.value} color={habit.color} />
           ))}
         </div>
@@ -165,6 +173,14 @@ export function HabitDetailPage() {
           </span>
           <ChevronRight size={16} className="text-tg-hint" aria-hidden />
         </button>
+
+        <MonthSummary habit={habit} today={today} />
+
+        {count && (
+          <div className="bg-tg-section rounded-2xl p-4 mb-5">
+            <CountChart habit={habit} today={today} onSelect={setDayDate} />
+          </div>
+        )}
 
         {hours && (
           <div className="bg-tg-section rounded-2xl p-4 mb-5">
@@ -266,6 +282,8 @@ export function HabitDetailPage() {
           color={habit.color}
           onClose={() => setHoursDate(null)}
           onSave={(m) => hoursDate && saveDay(hoursDate, m)}
+          skipped={hoursDate ? isSkippedOn(habit, hoursDate) : false}
+          onSkip={(on) => hoursDate && setHabitSkipped(habit, hoursDate, on)}
         />
       )}
       {!hours && <HabitDaySheet habit={habit} date={dayDate} onClose={() => setDayDate(null)} onSave={(v) => dayDate && saveDay(dayDate, v)} />}

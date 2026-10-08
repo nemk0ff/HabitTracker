@@ -2,7 +2,8 @@ import { useHabitsStore } from '../stores/habitsStore';
 import { useAuthStore } from '../stores/authStore';
 import { toast, type ToastAction } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
-import { formatHours, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn } from './habits';
+import { toDateString } from './dates';
+import { formatHours, isClosedOn, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn, isReturningUser, isSkippedOn } from './habits';
 import type { Habit } from '../types';
 
 export const INTENSITY_LABELS = ['Легко', 'Средне', 'Тяжело'] as const;
@@ -37,6 +38,11 @@ function noMarksYet(habits: Habit[]): boolean {
   return habits.every((h) => !h.entries.some((e) => isDoneValue(h, e.value)));
 }
 
+/** No done mark or skip on any habit for `date` yet (checked before the optimistic update). */
+function noMarksOn(habits: Habit[], date: string): boolean {
+  return habits.every((h) => !isClosedOn(h, date));
+}
+
 /**
  * Sets a habit's value for a date and shows a toast with "Отменить"
  * (an accidental tap is undone in one tap instead of silently changing history).
@@ -45,12 +51,17 @@ function noMarksYet(habits: Habit[]): boolean {
 export function setHabitValue(habit: Habit, date: string, value: number, { askIntensity = true } = {}) {
   const { toggleEntry, habits } = useHabitsStore.getState();
   const prev = valueOn(habit, date);
-  if (prev === value) return;
+  const prevSkipped = isSkippedOn(habit, date);
+  if (prev === value && !prevSkipped) return;
+  const today = toDateString(new Date());
   const firstEver = isDoneValue(habit, value) && noMarksYet(habits);
+  // First mark of today after a 3+ day break (soft return, plan §3.6).
+  const comeback =
+    !firstEver && date === today && isDoneValue(habit, value) && noMarksOn(habits, today) && isReturningUser(habits, today);
   toggleEntry(habit.id, date, value);
   haptic(value > 0 ? 'light' : 'select');
 
-  const undo: ToastAction = { label: 'Отменить', onClick: () => toggleEntry(habit.id, date, prev) };
+  const undo: ToastAction = { label: 'Отменить', onClick: () => toggleEntry(habit.id, date, prev, prevSkipped) };
   const offerIntensity = askIntensity && hasIntensity(habit) && prev === 0 && value > 0;
   const actions = offerIntensity
     ? [
@@ -64,6 +75,11 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
         undo,
       ]
     : [undo];
+  if (comeback) {
+    haptic('success');
+    toast('Снова в деле 💪', { actions, ms: 6000 });
+    return;
+  }
   if (firstEver) {
     haptic('success');
     const hasCheckin = !!useAuthStore.getState().user?.checkinTime;
@@ -75,6 +91,21 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
   }
   const text = offerIntensity ? `«${habit.name}» отмечено. Как прошло?` : describe(habit, value);
   toast(text, { actions, ms: offerIntensity ? 6000 : 4000 });
+}
+
+/**
+ * Marks a day as a pass (ill / vacation) or takes the pass back. A skip overrides a mark, keeps
+ * the streak and lowers the week's goal; the toast offers "Отменить" back to the previous state.
+ */
+export function setHabitSkipped(habit: Habit, date: string, skipped: boolean) {
+  const { toggleEntry } = useHabitsStore.getState();
+  const prev = valueOn(habit, date);
+  const prevSkipped = isSkippedOn(habit, date);
+  if (prevSkipped === skipped) return;
+  toggleEntry(habit.id, date, 0, skipped);
+  haptic('select');
+  const undo: ToastAction = { label: 'Отменить', onClick: () => toggleEntry(habit.id, date, prev, prevSkipped) };
+  toast(skipped ? 'Пропуск — серия сохранится' : `«${habit.name}»: пропуск отменён`, { actions: [undo], ms: 5000 });
 }
 
 /** One-tap check / uncheck for the day (hours habits need a value — use the hours sheet instead). */
@@ -100,7 +131,7 @@ export function incrementCount(habit: Habit, date: string) {
 export function markAll(habits: Habit[], date: string, label: string) {
   const { toggleEntry } = useHabitsStore.getState();
   const batch = habits
-    .filter((h) => !isHoursHabit(h) && !isMarkedOn(h, date))
+    .filter((h) => !isHoursHabit(h) && !isClosedOn(h, date))
     .map((h) => ({ id: h.id, prev: valueOn(h, date), next: isCountHabit(h) ? countTarget(h) : 1 }));
   if (batch.length === 0) return;
   for (const b of batch) toggleEntry(b.id, date, b.next);

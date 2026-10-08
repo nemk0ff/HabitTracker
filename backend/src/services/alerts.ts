@@ -74,7 +74,7 @@ export async function sendDailyReport(): Promise<void> {
       getWau(week.from, week.to),
       getTopEvents(yesterday.from, yesterday.to),
       prisma.habit.count({ where: { createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
-      prisma.habitEntry.count({ where: { createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
+      prisma.habitEntry.count({ where: { skipped: false, createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
       // Diary days are stored as UTC midnight of the local date, so this is "yesterday" in Moscow too.
       developerNutritionLine(yesterday.from).catch((err) => {
         console.error('[alerts] Nutrition line failed:', err);
@@ -121,8 +121,8 @@ export async function sendQuickStats(chatId: string): Promise<void> {
       getDau(yesterday.from, yesterday.to),
       getWau(week.from, week.to),
       prisma.habit.count({ where: { archived: false } }),
-      prisma.habitEntry.count(),
-      prisma.habitEntry.count({ where: { createdAt: { gte: today.from, lt: today.to } } }),
+      prisma.habitEntry.count({ where: { skipped: false } }),
+      prisma.habitEntry.count({ where: { skipped: false, createdAt: { gte: today.from, lt: today.to } } }),
     ]);
 
   const text = [

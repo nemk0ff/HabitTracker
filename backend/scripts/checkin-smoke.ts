@@ -3,8 +3,23 @@
  * Run: BOT_TOKEN="0:dummy" npx tsx scripts/checkin-smoke.ts
  */
 import { prisma } from '../src/db.js';
-import { addDays, dayDate } from '../src/services/habitStats.js';
-import { buildCheckinMessage, handleCheckinCallback, localClock, sortCheckinHabits } from '../src/services/checkin.js';
+import {
+  addDays,
+  dailyStreak,
+  datesByHabit,
+  dayDate,
+  setHabitEntry,
+  skippedByHabit,
+  weekdayIndex,
+  weeklyStreak,
+} from '../src/services/habitStats.js';
+import {
+  buildCheckinMessage,
+  checkinHabitsFor,
+  handleCheckinCallback,
+  localClock,
+  sortCheckinHabits,
+} from '../src/services/checkin.js';
 
 const telegramId = BigInt(9_000_000_000 + Math.floor(Math.random() * 1_000_000));
 const clock = localClock(new Date(), -180);
@@ -68,6 +83,49 @@ try {
 
   const done = await handleCheckinCallback(telegramId, `cd:${today}`);
   if (done.message) show('Готово', done.message);
+
+  // ── Skipped days ──
+  // Йога: done −1, skipped −2 (sick), done −3, −4 → streak 3 (the skip is transparent); today skipped → shows ⏸.
+  const yoga = await prisma.habit.create({ data: { userId: user.id, name: 'Йога', icon: '🧘', binary: true, timeOfDay: 'day' } });
+  for (const i of [1, 3, 4]) await setHabitEntry(yoga, dayDate(addDays(today, -i)), 1);
+  await setHabitEntry(yoga, dayDate(addDays(today, -2)), 0, true);
+  await setHabitEntry(yoga, dayDate(today), 1);
+  await setHabitEntry(yoga, dayDate(today), 0, true); // skip overrides today's mark
+  const yogaEntries = await prisma.habitEntry.findMany({ where: { habitId: yoga.id } });
+  const yogaDone = datesByHabit(yogaEntries, [yoga]).get(yoga.id) ?? new Set<string>();
+  const yogaSkips = skippedByHabit(yogaEntries).get(yoga.id);
+  console.log(`\nЙога today entry =`, JSON.stringify(yogaEntries.find((e) => e.date.getTime() === dayDate(today).getTime())), '(expect value 0, skipped)');
+  console.log('Йога streak =', dailyStreak(yogaDone, today, yogaSkips), '(expect 3: skipped −2 and today transparent)');
+  console.log('Йога streak ignoring skips =', dailyStreak(yogaDone, today), '(expect 1)');
+  // Weekly 3×: a week with 2 skipped days needs 1 done day.
+  const mon = addDays(today, -weekdayIndex(today) - 7);
+  const wk = new Set([mon, addDays(mon, -7), addDays(mon, -6), addDays(mon, -5)]);
+  console.log('weekly 3× streak with last week 2 skipped =', weeklyStreak(wk, 3, today, new Set([addDays(mon, 1), addDays(mon, 2)])), '(expect 2)');
+  console.log('… without the skips =', weeklyStreak(wk, 3, today), '(expect 0)');
+
+  r = await handleCheckinCallback(telegramId, `cd:${today}`);
+  if (r.message) show('Готово with Йога skipped (expect "из 3")', r.message);
+
+  // ── Morning check-in ──
+  const morningUser = await prisma.user.update({ where: { id: user.id }, data: { morningCheckinTime: '08:00' } });
+  await prisma.habitEntry.deleteMany({ where: { habitId: water.id } });
+  const all = sortCheckinHabits(await prisma.habit.findMany({ where: { userId: user.id } }));
+  const allEntries = await prisma.habitEntry.findMany({ where: { habitId: { in: all.map((h) => h.id) } } });
+  const morning = checkinHabitsFor('morning', all, morningUser);
+  const evening = checkinHabitsFor('evening', all, morningUser);
+  console.log('\nmorning habits:', morning.map((h) => h.name).join(', '), '(expect Вода)');
+  console.log('evening habits:', evening.map((h) => h.name).join(', '), '(expect no Вода)');
+  show('morning message', buildCheckinMessage(morningUser, morning, allEntries, today, 'morning'));
+  r = await handleCheckinCallback(telegramId, `ci:${water.id}:${today}:-1:m`);
+  console.log(`morning +1 Вода → ${r.answer}`);
+  if (r.message) show('morning after tap (expect only Вода, ":m" callbacks)', r.message);
+  r = await handleCheckinCallback(telegramId, `cd:${today}:m`);
+  if (r.message) show('morning Готово', r.message);
+
+  show('evening with Йога skipped (expect ⏸ 🧘 Йога → :1)', buildCheckinMessage(morningUser, evening, allEntries, today));
+  r = await handleCheckinCallback(telegramId, `ci:${yoga.id}:${today}:1`);
+  console.log(`\ntap ⏸ Йога → ${r.answer}; entry =`, JSON.stringify(await entryOf(yoga.id)), '(expect value 1, skipped false)');
+  if (r.message) show('evening after unskip (no Вода)', r.message);
 } finally {
   await new Promise((res) => setTimeout(res, 300)); // let fire-and-forget track() land
   await prisma.analyticsEvent.deleteMany({ where: { userId: user.id } });

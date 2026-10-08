@@ -18,6 +18,7 @@ import {
   useIsDark,
   HEATMAP_ALPHA,
 } from '../utils/colors';
+import { skipHatch } from '../utils/habits';
 import type { HabitEntry } from '../types';
 
 const DEFAULT_LEVEL_LABELS = ['легко', 'средне', 'тяжело'];
@@ -41,6 +42,8 @@ export function Heatmap({ entries, color, binary = false, onSelect, selectedDate
   const [direction, setDirection] = useState(0);
 
   const entryMap = useMemo(() => new Map(entries.map((e) => [e.date, e.value])), [entries]);
+  // Skipped days (ill / vacation): hatched in the habit colour, read out as «пропуск».
+  const skippedSet = useMemo(() => new Set(entries.filter((e) => e.skipped).map((e) => e.date)), [entries]);
   const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
   const monthDate = new Date(year, month);
 
@@ -136,8 +139,10 @@ export function Heatmap({ entries, color, binary = false, onSelect, selectedDate
                 const bg = level > 0 ? getHeatmapColor(color, level) : getEmptyColor();
                 const ink = level > 0 ? readableOnBlend(color, HEATMAP_ALPHA[level] ?? 1, isDark) : undefined;
                 const isSelected = selectedDate === dateStr;
-                const state =
-                  value <= 0
+                const skipped = level === 0 && skippedSet.has(dateStr);
+                const state = skipped
+                  ? 'пропуск'
+                  : value <= 0
                     ? 'не отмечено'
                     : binary
                       ? 'выполнено'
@@ -154,7 +159,7 @@ export function Heatmap({ entries, color, binary = false, onSelect, selectedDate
                     aria-current={isTodayCell ? 'date' : undefined}
                     aria-pressed={selectedDate !== undefined ? isSelected : undefined}
                     className="aspect-square rounded-lg flex items-center justify-center text-xs font-medium transition-colors disabled:opacity-30 relative focus-ring"
-                    style={{ backgroundColor: bg }}
+                    style={{ backgroundColor: bg, backgroundImage: skipped ? skipHatch(color, 2, 5) : undefined }}
                   >
                     {isSelected && (
                       <div

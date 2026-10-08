@@ -54,25 +54,38 @@ export interface DoneHabit {
   dailyTarget: number | null;
 }
 
-/** Whether an entry value counts as "done" for the day. Count habits need value ≥ dailyTarget (min 1). */
-export function isDone(habit: DoneHabit, value: number | null | undefined): boolean {
-  if (!value || value <= 0) return false;
-  if (habit.measure === 'count') return value >= Math.max(1, habit.dailyTarget ?? 1);
+/** Daily target of a count habit (at least 1). */
+export function countTarget(habit: Pick<DoneHabit, 'dailyTarget'>): number {
+  return Math.max(1, habit.dailyTarget ?? 1);
+}
+
+/** Whether an entry value counts as "done" for the day. Count habits need value ≥ dailyTarget (min 1). A skipped day is never done. */
+export function isDone(habit: DoneHabit, value: number | null | undefined, skipped = false): boolean {
+  if (skipped || !value || value <= 0) return false;
+  if (habit.measure === 'count') return value >= countTarget(habit);
   return true;
 }
 
 /**
- * Upserts the entry for `date`, or deletes it when `value` is 0.
+ * Upserts the entry for `date`, or deletes it when `value` is 0. `skipped` stores a day off
+ * (value 0 + skipped, overriding any mark); a value > 0 clears a skip.
  * Caller validates ownership and the value range. Returns the entry, or null when deleted.
  */
-export async function setHabitEntry(habit: EntryHabit, entryDate: Date, value: number) {
+export async function setHabitEntry(habit: EntryHabit, entryDate: Date, value: number, skipped = false) {
+  if (skipped) {
+    return prisma.habitEntry.upsert({
+      where: { habitId_date: { habitId: habit.id, date: entryDate } },
+      update: { value: 0, skipped: true },
+      create: { habitId: habit.id, date: entryDate, value: 0, skipped: true },
+    });
+  }
   if (value === 0) {
     await prisma.habitEntry.deleteMany({ where: { habitId: habit.id, date: entryDate } });
     return null;
   }
   return prisma.habitEntry.upsert({
     where: { habitId_date: { habitId: habit.id, date: entryDate } },
-    update: { value },
+    update: { value, skipped: false },
     create: { habitId: habit.id, date: entryDate, value },
   });
 }
@@ -84,40 +97,72 @@ export interface Streak {
   unit: 'day' | 'week';
 }
 
-/** Days in a row ending today; an unmarked today doesn't break the streak yet. */
-export function dailyStreak(dates: ReadonlySet<string>, today: string): number {
-  let day = dates.has(today) ? today : addDays(today, -1);
+const NONE: ReadonlySet<string> = new Set();
+
+/**
+ * Done days in a row ending today; an unmarked today doesn't break the streak yet. Skipped days are
+ * transparent: they neither break nor extend it.
+ */
+export function dailyStreak(dates: ReadonlySet<string>, today: string, skipped: ReadonlySet<string> = NONE): number {
+  const seen = (d: string) => dates.has(d) || skipped.has(d);
+  let day = seen(today) ? today : addDays(today, -1);
   let count = 0;
-  while (dates.has(day)) {
-    count++;
+  while (seen(day)) {
+    if (dates.has(day)) count++;
     day = addDays(day, -1);
   }
   return count;
 }
 
-/** Monday weeks in a row with ≥ `target` marks; an unfinished current week doesn't break it. */
-export function weeklyStreak(dates: ReadonlySet<string>, target: number, today: string): number {
-  const perWeek = new Map<string, number>();
-  for (const d of dates) {
-    if (d > today) continue;
-    const w = mondayOf(d);
-    perWeek.set(w, (perWeek.get(w) ?? 0) + 1);
-  }
-  const met = (w: string) => (perWeek.get(w) ?? 0) >= target;
+/** Done days a week needs for a weekly `target` when `skippedDays` of it are skipped. */
+export function weekRequirement(target: number, skippedDays: number): number {
+  return Math.max(0, target - skippedDays);
+}
+
+/**
+ * Monday weeks in a row with ≥ `target` − (the week's skipped days) marks; an unfinished current week
+ * doesn't break it. A week skipped down to a 0 requirement with nothing done is transparent.
+ */
+export function weeklyStreak(
+  dates: ReadonlySet<string>,
+  target: number,
+  today: string,
+  skipped: ReadonlySet<string> = NONE,
+): number {
+  const tally = (set: ReadonlySet<string>) => {
+    const perWeek = new Map<string, number>();
+    for (const d of set) {
+      if (d > today) continue;
+      const w = mondayOf(d);
+      perWeek.set(w, (perWeek.get(w) ?? 0) + 1);
+    }
+    return perWeek;
+  };
+  const done = tally(dates);
+  const skips = tally(skipped);
+  const required = (w: string) => weekRequirement(target, skips.get(w) ?? 0);
+  const transparent = (w: string) => required(w) === 0 && !done.has(w);
+  const met = (w: string) => !transparent(w) && (done.get(w) ?? 0) >= required(w);
+
   let week = mondayOf(today);
-  if (!met(week)) week = addDays(week, -7);
+  if (!met(week) && !transparent(week)) week = addDays(week, -7);
   let count = 0;
-  while (met(week)) {
-    count++;
+  while (met(week) || transparent(week)) {
+    if (met(week)) count++;
     week = addDays(week, -7);
   }
   return count;
 }
 
-export function habitStreak(habit: { weeklyTarget: number | null }, dates: ReadonlySet<string>, today: string): Streak {
+export function habitStreak(
+  habit: { weeklyTarget: number | null },
+  dates: ReadonlySet<string>,
+  today: string,
+  skipped: ReadonlySet<string> = NONE,
+): Streak {
   return habit.weeklyTarget
-    ? { count: weeklyStreak(dates, habit.weeklyTarget, today), unit: 'week' }
-    : { count: dailyStreak(dates, today), unit: 'day' };
+    ? { count: weeklyStreak(dates, habit.weeklyTarget, today, skipped), unit: 'week' }
+    : { count: dailyStreak(dates, today, skipped), unit: 'day' };
 }
 
 /** "5 дней" / "3 недели". */
@@ -145,21 +190,25 @@ export interface WeekStats {
 
 /**
  * Done days (see `datesByHabit`) in the Monday week containing `date` (up to `date`). Target per habit is its
- * weeklyTarget or 7; marks above the target don't count toward the total.
+ * weeklyTarget or 7, minus the week's skipped days (`skippedByHabit`); marks above the target don't count toward the total.
  */
 export function weekStats(
   habits: { id: number; name: string; weeklyTarget: number | null }[],
   datesByHabit: ReadonlyMap<number, ReadonlySet<string>>,
   date: string,
+  skippedByHabit: ReadonlyMap<number, ReadonlySet<string>> = new Map(),
 ): WeekStats {
   const from = mondayOf(date);
+  const to = addDays(from, 6);
   const stats = habits.map((h) => {
     let done = 0;
     for (const d of datesByHabit.get(h.id) ?? []) if (d >= from && d <= date) done++;
-    return { habitId: h.id, name: h.name, done, target: h.weeklyTarget ?? 7 };
+    let skips = 0;
+    for (const d of skippedByHabit.get(h.id) ?? []) if (d >= from && d <= to) skips++;
+    return { habitId: h.id, name: h.name, done, target: weekRequirement(h.weeklyTarget ?? 7, skips) };
   });
   const best = stats
-    .filter((s) => s.done > 0)
+    .filter((s) => s.done > 0 && s.target > 0)
     .sort((a, b) => b.done / b.target - a.done / a.target || b.done - a.done)[0] ?? null;
   return {
     done: stats.reduce((s, h) => s + Math.min(h.done, h.target), 0),
@@ -171,14 +220,26 @@ export function weekStats(
 
 /** Groups done entries (per `isDone`) into habitId → set of 'YYYY-MM-DD'. Entries of habits not in `habits` are dropped. */
 export function datesByHabit(
-  entries: { habitId: number; date: Date; value: number }[],
+  entries: { habitId: number; date: Date; value: number; skipped?: boolean }[],
   habits: ({ id: number } & DoneHabit)[],
 ): Map<number, Set<string>> {
   const byId = new Map(habits.map((h) => [h.id, h]));
   const map = new Map<number, Set<string>>();
   for (const e of entries) {
     const habit = byId.get(e.habitId);
-    if (!habit || !isDone(habit, e.value)) continue;
+    if (!habit || !isDone(habit, e.value, e.skipped)) continue;
+    let set = map.get(e.habitId);
+    if (!set) map.set(e.habitId, (set = new Set()));
+    set.add(toDateString(e.date));
+  }
+  return map;
+}
+
+/** Groups skipped entries into habitId → set of 'YYYY-MM-DD'. */
+export function skippedByHabit(entries: { habitId: number; date: Date; skipped?: boolean }[]): Map<number, Set<string>> {
+  const map = new Map<number, Set<string>>();
+  for (const e of entries) {
+    if (!e.skipped) continue;
     let set = map.get(e.habitId);
     if (!set) map.set(e.habitId, (set = new Set()));
     set.add(toDateString(e.date));

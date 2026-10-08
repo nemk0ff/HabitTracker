@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { HabitTile } from './HabitTile';
 import { haptic } from '../hooks/useTelegramButtons';
-import { isHoursHabit, isMarkedOn } from '../utils/habits';
+import { isClosedOn, isHoursHabit } from '../utils/habits';
 import { markAll } from '../utils/habitActions';
 import type { Habit } from '../types';
 
@@ -14,16 +14,19 @@ interface Props {
   showHeader: boolean;
   onTap: (habit: Habit) => void;
   onOpen: (id: number) => void;
+  /** Long press on a tile: the actions sheet (open / skip / unmark). */
+  onMenu?: (habit: Habit) => void;
   /** Extra tile at the end of the grid (the «Добавить» tile in the last section). */
   trailing?: ReactNode;
 }
 
 /** One time-of-day block of the Today screen: «Утро 2/4 · Отметить всё», collapses once all done. */
-export function TodaySection({ label, habits, date, showHeader, onTap, onOpen, trailing }: Props) {
-  const done = habits.filter((h) => isMarkedOn(h, date)).length;
+export function TodaySection({ label, habits, date, showHeader, onTap, onOpen, onMenu, trailing }: Props) {
+  // A skipped habit (ill / vacation) is closed for the day, like a done one.
+  const done = habits.filter((h) => isClosedOn(h, date)).length;
   const allDone = done === habits.length;
   // Hours habits need a value, so «Отметить всё» only covers the rest — and only pays off for 2+.
-  const markable = habits.filter((h) => !isHoursHabit(h) && !isMarkedOn(h, date)).length >= 2;
+  const markable = habits.filter((h) => !isHoursHabit(h) && !isClosedOn(h, date)).length >= 2;
   const [expanded, setExpanded] = useState(false);
 
   // A section that is no longer complete (undo) starts collapsed again next time it closes.
@@ -94,7 +97,7 @@ export function TodaySection({ label, habits, date, showHeader, onTap, onOpen, t
       {grid(
         <>
           {habits.map((h) => (
-            <HabitTile key={h.id} habit={h} date={date} onTap={onTap} onOpen={onOpen} />
+            <HabitTile key={h.id} habit={h} date={date} onTap={onTap} onOpen={onOpen} onMenu={onMenu} />
           ))}
           {trailing}
         </>,
