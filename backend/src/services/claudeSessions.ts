@@ -92,19 +92,23 @@ async function checkSessionWarning(): Promise<void> {
   }
 
   if (!state.warningSent && now >= warningAt) {
-    await saveState({ ...state, warningSent: true });
-    if (DEVELOPER_CHAT_ID) {
-      await sendMessage(
-        DEVELOPER_CHAT_ID,
-        '⚠️ <b>До конца сессии Claude осталось 30 минут</b>\nНе забудь потратить токены, если они ещё нужны.',
-      );
-    }
+    if (!DEVELOPER_CHAT_ID) return;
+    const sent = await sendMessage(
+      DEVELOPER_CHAT_ID,
+      '⚠️ <b>До конца сессии Claude осталось 30 минут</b>\nНе забудь потратить токены, если они ещё нужны.',
+    );
+    // Mark only after a successful send, so a Telegram hiccup is retried next minute.
+    if (sent) await saveState({ ...state, warningSent: true });
   }
 }
 
 export function startSessionWarningCron(): void {
-  cron.schedule('* * * * *', () => {
-    checkSessionWarning().catch((err) => console.error('[claudeSessions] Cron error:', err));
-  });
+  cron.schedule(
+    '* * * * *',
+    () => {
+      checkSessionWarning().catch((err) => console.error('[claudeSessions] Cron error:', err));
+    },
+    { timezone: 'UTC' },
+  );
   console.log('[claudeSessions] Session warning cron started (runs every minute)');
 }

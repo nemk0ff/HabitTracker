@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { HABIT_COLORS } from '../utils/colors';
+import { Check } from 'lucide-react';
+import { HABIT_COLORS, readableOn } from '../utils/colors';
 
 interface Props {
   value: string;
@@ -25,15 +26,7 @@ export function ColorPicker({ value, onChange }: Props) {
           }}
         >
           {value === color && (
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path
-                d="M4 9.5L7.5 13L14 5"
-                stroke="white"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <Check size={18} color={readableOn(color)} strokeWidth={2.5} aria-hidden />
           )}
         </motion.button>
       ))}

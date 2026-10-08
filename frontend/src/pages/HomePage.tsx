@@ -1,36 +1,19 @@
-import { useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useAuthStore } from '../stores/authStore';
 import { HabitCard } from '../components/HabitCard';
+import { useBackButton, useMainButton } from '../hooks/useTelegramButtons';
 
 export function HomePage() {
-  const { habits, loading } = useHabitsStore();
+  const { habits, loading } = useHabitsStore(useShallow((s) => ({ habits: s.habits, loading: s.loading })));
   const navigate = useNavStore((s) => s.navigate);
-  const user = useAuthStore((s) => s.user);
+  const back = useNavStore((s) => s.back);
+  const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
 
-  useEffect(() => {
-    const webapp = window.Telegram?.WebApp;
-    if (webapp) {
-      webapp.BackButton?.show?.();
-      const backHandler = () => navigate('hub');
-      webapp.BackButton?.onClick?.(backHandler);
-
-      webapp.MainButton?.setParams?.({
-        text: 'Добавить привычку',
-        is_visible: true,
-      });
-      const handler = () => navigate('create');
-      webapp.MainButton?.onClick?.(handler);
-
-      return () => {
-        webapp.BackButton?.offClick?.(backHandler);
-        webapp.MainButton?.offClick?.(handler);
-        webapp.MainButton?.hide?.();
-      };
-    }
-  }, [navigate]);
+  useBackButton(back);
+  useMainButton('Добавить привычку', () => navigate('create'));
 
   if (loading) {
     return (
@@ -56,7 +39,7 @@ export function HomePage() {
       <div className="p-4 pb-24">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold text-tg-text">Мои привычки</h1>
-          {user?.isAdmin && (
+          {isAdmin && (
             <button
               onClick={() => navigate('admin')}
               className="px-3 py-1.5 rounded-xl text-sm font-medium bg-tg-secondary text-tg-text active:opacity-70 transition-opacity"

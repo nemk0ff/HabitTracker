@@ -45,7 +45,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const res = await api<{ token: string; user: User }>('/api/auth', {
         method: 'POST',
-        body: JSON.stringify({ initData }),
+        // tzOffset lets the bot compute the user's local "today" for reminders.
+        body: JSON.stringify({ initData, tzOffset: new Date().getTimezoneOffset() }),
         signal: controller.signal,
       });
       clearTimeout(abortId);

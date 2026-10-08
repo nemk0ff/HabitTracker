@@ -1,12 +1,13 @@
-import { useRef, useState, useLayoutEffect } from 'react';
+import { memo, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import { motion } from 'framer-motion';
 import { MiniHeatmap } from './MiniHeatmap';
 import { calculateStreak, toDateString } from '../utils/dates';
 import { useNavStore } from '../stores/navStore';
 import { HoursSheet } from './HoursSheet';
 import { formatHours, isHoursHabit, levelEntries, weekProgress } from '../utils/habits';
-import { ChevronRight } from 'lucide-react';
+import { Check, ChevronRight, Flame } from 'lucide-react';
 import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
+import { readableOn, legibleColor, useIsDark } from '../utils/colors';
 import type { Habit } from '../types';
 
 interface Props {
@@ -14,14 +15,23 @@ interface Props {
   readOnly?: boolean;
 }
 
-export function HabitCard({ habit, readOnly = false }: Props) {
+export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Props) {
   const navigate = useNavStore((s) => s.navigate);
-  const { current } = calculateStreak(habit.entries);
   const todayStr = toDateString(new Date());
+  // Recomputed only when this habit (or the day) changes, not on every parent render.
+  const { current } = useMemo(() => calculateStreak(habit.entries), [habit.entries, todayStr]);
+  const heatEntries = useMemo(() => levelEntries(habit), [habit]);
+  const weekDone = useMemo(
+    () => (habit.weeklyTarget ? weekProgress(habit, todayStr).done : 0),
+    [habit, todayStr],
+  );
   const todayEntry = habit.entries.find((e) => e.date === todayStr);
   const isDoneToday = todayEntry && todayEntry.value > 0;
 
   const hours = isHoursHabit(habit);
+  const isDark = useIsDark();
+  const onColor = readableOn(habit.color);
+  const textColor = legibleColor(habit.color, isDark);
   const [hoursOpen, setHoursOpen] = useState(false);
 
   const heatmapRef = useRef<HTMLDivElement>(null);
@@ -68,7 +78,7 @@ export function HabitCard({ habit, readOnly = false }: Props) {
         {/* Heatmap — takes all available space */}
         <div ref={heatmapRef} className="flex-1 min-w-0 overflow-hidden">
           <MiniHeatmap
-            entries={levelEntries(habit)}
+            entries={heatEntries}
             color={habit.color}
             binary={habit.binary}
             weeks={weeks}
@@ -91,22 +101,14 @@ export function HabitCard({ habit, readOnly = false }: Props) {
               }}
             >
               {hours && isDoneToday && (
-                <span className="text-xs font-bold text-white whitespace-nowrap">{formatHours(todayEntry!.value)}</span>
+                <span className="text-xs font-bold whitespace-nowrap" style={{ color: onColor }}>{formatHours(todayEntry!.value)}</span>
               )}
               {!hours && isDoneToday && (
-                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
-                  <path
-                    d="M4 9.5L7.5 13L14 5"
-                    stroke="white"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <Check size={16} color={onColor} strokeWidth={2.5} aria-hidden />
               )}
             </button>
             {habit.icon && (
-              <span className="text-xl leading-none">{habit.icon}</span>
+              <span className="text-xl leading-none" aria-hidden="true">{habit.icon}</span>
             )}
             {!readOnly && (
               <button
@@ -129,14 +131,13 @@ export function HabitCard({ habit, readOnly = false }: Props) {
 
           {/* Weekly goal → this week's progress; daily habit → streak */}
           {habit.weeklyTarget ? (
-            <div className="text-xs font-medium" style={{ color: habit.color }}>
-              {weekProgress(habit, toDateString(new Date())).done} из {habit.weeklyTarget} за неделю
+            <div className="text-xs font-medium" style={{ color: textColor }}>
+              {weekDone} из {habit.weeklyTarget} за неделю
             </div>
           ) : current > 0 ? (
-            <div className="flex items-center gap-0.5 text-xs font-medium" style={{ color: habit.color }}>
-              <svg width="11" height="11" viewBox="0 0 14 14" fill="currentColor">
-                <path d="M7 0.5C7 0.5 8.5 3 8.5 5C8.5 5.8 8.2 6.5 7.7 7C8.8 6.2 10 5 10 3.5C10 3.5 13 6 13 9.5C13 11.7 11.2 13.5 9 13.5C8.1 13.5 7.3 13.2 6.7 12.7C6.9 12.3 7 11.9 7 11.5C7 10.1 5.9 9 4.5 9C3.8 9 3.2 9.3 2.7 9.7C2 9.7 1 9 1 9.5C1 11.7 2.8 13.5 5 13.5C3.6 13.5 2.5 12.4 2.5 11C2.5 9.6 3.6 8.5 5 8.5C5 8.5 4 7.5 4 6C4 4 7 0.5 7 0.5Z" />
-              </svg>
+            <div className="flex items-center gap-0.5 text-xs font-medium" style={{ color: textColor }}>
+              <span className="sr-only">Серия дней подряд:</span>
+              <Flame size={11} fill="currentColor" strokeWidth={1.5} aria-hidden />
               {current}
             </div>
           ) : (
@@ -157,4 +158,4 @@ export function HabitCard({ habit, readOnly = false }: Props) {
       )}
     </motion.div>
   );
-}
+});

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { ChevronRight, Plus, Utensils, Scale, NotebookText } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '../stores/authStore';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
@@ -11,10 +12,13 @@ import { toast } from '../stores/toastStore';
 import { HoursSheet } from '../components/HoursSheet';
 import { WeightSheet } from '../components/nutrition/WeightSheet';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
-import { toDateString } from '../utils/dates';
+import { useToday } from '../hooks/useToday';
+import { capitalizeFirst } from '../utils/dates';
+import { readableOn } from '../utils/colors';
 import { MACRO_COLORS, fmt, mealByTime } from '../utils/nutrition';
 import { formatHours, isHoursHabit, weekProgress } from '../utils/habits';
 import { setHabitValue, toggleHabitDay } from '../utils/habitActions';
+import { HABIT_TEMPLATES, QUICK_TEMPLATE_KEYS, templateToHabit, type HabitTemplate } from '../utils/habitTemplates';
 import type { Habit } from '../types';
 
 /**
@@ -22,16 +26,19 @@ import type { Habit } from '../types';
  * (design review 07.10: habits got 2 marks per 36 opens behind the old hub).
  */
 export function TodayPage() {
-  const user = useAuthStore((s) => s.user);
+  const nutrition = useAuthStore((s) => !!s.user?.features?.nutrition);
   const habits = useHabitsStore((s) => s.habits);
   const navigate = useNavStore((s) => s.navigate);
-  const { days, plans, loadDay, loadPlan, saveWeight } = useNutritionStore();
-  const nutrition = !!user?.features?.nutrition;
-  const today = toDateString(new Date());
-  const day = days[today];
-  const plan = plans[today];
+  const today = useToday();
+  const day = useNutritionStore((s) => s.days[today]);
+  const plan = useNutritionStore((s) => s.plans[today]);
+  const { loadDay, loadPlan, saveWeight } = useNutritionStore(
+    useShallow((s) => ({ loadDay: s.loadDay, loadPlan: s.loadPlan, saveWeight: s.saveWeight })),
+  );
 
-  const [hoursHabit, setHoursHabit] = useState<Habit | null>(null);
+  // Keep the id, not the object: the sheet must see the live entries after each save.
+  const [hoursHabitId, setHoursHabitId] = useState<number | null>(null);
+  const hoursHabit = habits.find((h) => h.id === hoursHabitId) ?? null;
   const [weightOpen, setWeightOpen] = useState(false);
 
   useBackButton(null);
@@ -55,12 +62,17 @@ export function TodayPage() {
     toast(`Вес ${fmt(kg, 1)} кг записан`);
   };
 
-  const tapHabit = (h: Habit) => (isHoursHabit(h) ? setHoursHabit(h) : toggleHabitDay(h, today));
+  // Stable callbacks so memoized tiles re-render only when their own habit changes.
+  const tapHabit = useCallback(
+    (h: Habit) => (isHoursHabit(h) ? setHoursHabitId(h.id) : toggleHabitDay(h, today)),
+    [today],
+  );
+  const openHabit = useCallback((id: number) => navigate('habit', { selectedHabitId: id }), [navigate]);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="scrollable">
       <div className="p-4 pb-10">
-        <h1 className="text-xl font-semibold text-tg-text mb-4">{capitalizeFirst(format(new Date(), 'EEEE, d MMMM', { locale: ru }))}</h1>
+        <h1 className="text-xl font-semibold text-tg-text mb-4">{capitalizeFirst(format(parseISO(today), 'EEEE, d MMMM', { locale: ru }))}</h1>
 
         {/* The day's main block: what's left to eat + weight */}
         {nutrition && (
@@ -159,19 +171,11 @@ export function TodayPage() {
         </div>
 
         {habits.length === 0 ? (
-          <button onClick={() => navigate('create')} className="w-full rounded-2xl bg-tg-section py-6 text-sm text-tg-hint">
-            Добавь первую привычку
-          </button>
+          <EmptyHabits onPickMore={() => navigate('onboarding')} />
         ) : (
           <div className="grid grid-cols-3 gap-2">
             {habits.map((h) => (
-              <HabitTile
-                key={h.id}
-                habit={h}
-                date={today}
-                onTap={() => tapHabit(h)}
-                onOpen={() => navigate('habit', { selectedHabitId: h.id })}
-              />
+              <HabitTile key={h.id} habit={h} date={today} onTap={tapHabit} onOpen={openHabit} />
             ))}
           </div>
         )}
@@ -183,7 +187,7 @@ export function TodayPage() {
           title={hoursHabit.name}
           minutes={hoursHabit.entries.find((e) => e.date === today)?.value ?? 0}
           color={hoursHabit.color}
-          onClose={() => setHoursHabit(null)}
+          onClose={() => setHoursHabitId(null)}
           onSave={(m) => setHabitValue(hoursHabit, today, m)}
         />
       )}
@@ -197,48 +201,61 @@ export function TodayPage() {
   );
 }
 
-function HabitTile({ habit, date, onTap, onOpen }: { habit: Habit; date: string; onTap: () => void; onOpen: () => void }) {
+interface TileProps {
+  habit: Habit;
+  date: string;
+  onTap: (habit: Habit) => void;
+  onOpen: (id: number) => void;
+}
+
+const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen }: TileProps) {
   const entry = habit.entries.find((e) => e.date === date && e.value > 0);
   const done = !!entry;
   const hours = isHoursHabit(habit);
   const week = weekProgress(habit, date);
+  // On a filled tile the ink is black or white by the habit colour's brightness (white on yellow is unreadable).
+  const ink = done ? readableOn(habit.color) : 'var(--tg-theme-text-color)';
+  const weekTarget = habit.weeklyTarget ? week.target : 7;
+  const label =
+    `${habit.name}: ${done ? 'отмечено' : 'не отмечено'}` +
+    (hours && done ? `, ${formatHours(entry!.value)}` : '') +
+    `. На этой неделе ${week.done} из ${weekTarget}`;
+
   return (
     <div className="relative">
       <motion.button
         whileTap={{ scale: 0.95 }}
-        onClick={onTap}
+        onClick={() => onTap(habit)}
         aria-pressed={done}
-        aria-label={`${habit.name}: ${done ? 'отмечено' : 'не отмечено'}`}
+        aria-label={label}
         className="w-full aspect-square rounded-2xl p-3 flex flex-col justify-between text-left transition-colors duration-200"
         style={{
           backgroundColor: done ? habit.color : 'var(--tg-theme-section-bg-color)',
-          color: done ? '#fff' : 'var(--tg-theme-text-color)',
+          color: ink,
           boxShadow: done ? undefined : `inset 0 0 0 1.5px ${habit.color}55`,
         }}
       >
-        <span className="text-2xl leading-none">{habit.icon ?? '•'}</span>
-        <span>
+        <span className="text-2xl leading-none" aria-hidden>{habit.icon ?? '•'}</span>
+        <span aria-hidden>
           {hours && done && <span className="block font-display text-base leading-tight">{formatHours(entry!.value)}</span>}
           <span className="block text-sm font-medium leading-tight line-clamp-2">{habit.name}</span>
           {/* This week at a glance: "2 из 3" for weekly goals, seven day dots for daily habits */}
           {habit.weeklyTarget ? (
-            <span
-              className="block text-xs mt-1 whitespace-nowrap"
-              style={{ opacity: done ? 0.9 : 0.6 }}
-              aria-label={`На этой неделе ${week.done} из ${week.target}`}
-            >
+            <span className="block text-xs mt-1 whitespace-nowrap" style={{ opacity: 0.85 }}>
               {week.done} из {week.target} в нед.
             </span>
           ) : (
-            <span className="flex gap-[3px] mt-1.5" aria-label={`На этой неделе: ${week.done} из 7`}>
+            <span className="flex gap-[3px] mt-1.5">
               {week.days.map((d) => (
                 <span
                   key={d.date}
                   className="w-[7px] h-[7px] rounded-full"
-                  style={{
-                    backgroundColor: d.done ? (done ? '#fff' : habit.color) : 'currentColor',
-                    opacity: d.done ? 1 : d.future ? 0.12 : 0.25,
-                  }}
+                  style={
+                    d.done
+                      ? { backgroundColor: done ? ink : habit.color }
+                      : // Empty day: an outline ring (not a faint fill), dimmer for days still ahead.
+                        { boxShadow: `inset 0 0 0 ${d.future ? 1 : 1.5}px currentColor`, opacity: d.future ? 0.7 : 0.85 }
+                  }
                 />
               ))}
             </span>
@@ -246,18 +263,60 @@ function HabitTile({ habit, date, onTap, onOpen }: { habit: Habit; date: string;
         </span>
       </motion.button>
       <button
-        onClick={onOpen}
+        onClick={() => onOpen(habit.id)}
         aria-label={`Открыть «${habit.name}»`}
         className="absolute top-0 right-0 w-10 h-10 flex items-center justify-center"
-        style={{ color: done ? '#fff' : 'var(--tg-theme-hint-color)' }}
+        style={{ color: done ? ink : 'var(--tg-theme-hint-color)' }}
       >
         <ChevronRight size={18} aria-hidden />
       </button>
     </div>
   );
-}
+});
 
-/** "среда, 7 октября" → "Среда, 7 октября" (CSS `capitalize` would also capitalize the month). */
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+/** No habits yet: one tap on a chip creates a ready-made habit; the full picker is one more tap away. */
+function EmptyHabits({ onPickMore }: { onPickMore: () => void }) {
+  const addHabit = useHabitsStore((s) => s.addHabit);
+  const [busy, setBusy] = useState<string | null>(null);
+  const quick = QUICK_TEMPLATE_KEYS.map((k) => HABIT_TEMPLATES.find((t) => t.key === k)).filter(
+    (t): t is HabitTemplate => !!t,
+  );
+
+  const add = async (t: HabitTemplate) => {
+    if (busy) return;
+    setBusy(t.key);
+    const ok = await addHabit(templateToHabit(t));
+    setBusy(null);
+    haptic(ok ? 'success' : 'error');
+  };
+
+  return (
+    <div className="rounded-2xl bg-tg-section p-4">
+      <p className="text-base font-medium text-tg-text">Начни с одной привычки</p>
+      <p className="text-sm text-tg-hint mt-0.5">Нажми — и она появится здесь, отмечать можно сразу</p>
+      <div className="flex flex-wrap gap-2 mt-3">
+        {quick.map((t) => (
+          <motion.button
+            key={t.key}
+            type="button"
+            whileTap={{ scale: 0.95 }}
+            onClick={() => add(t)}
+            disabled={!!busy}
+            className="min-h-[44px] px-4 rounded-full text-sm font-medium flex items-center gap-1.5 disabled:opacity-60"
+            style={{ backgroundColor: t.color, color: readableOn(t.color) }}
+          >
+            <span aria-hidden>{t.icon}</span> {t.name}
+          </motion.button>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={onPickMore}
+        className="mt-2 min-h-[44px] text-sm font-medium flex items-center gap-1"
+        style={{ color: 'var(--accent)' }}
+      >
+        Выбрать из списка <ChevronRight size={16} aria-hidden />
+      </button>
+    </div>
+  );
+}

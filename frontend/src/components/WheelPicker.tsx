@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 
 interface Props {
   items: string[];
@@ -6,9 +6,11 @@ interface Props {
   onChange: (index: number) => void;
   itemHeight?: number;
   visibleCount?: number;
+  /** Accessible name, e.g. «Часы». */
+  label?: string;
 }
 
-export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCount = 5 }: Props) {
+export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCount = 5, label }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isScrolling = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -50,10 +52,39 @@ export function WheelPicker({ items, value, onChange, itemHeight = 40, visibleCo
   const fadeStop = `${((itemHeight / containerHeight) * 100).toFixed(1)}%`;
   const fadeMask = `linear-gradient(to bottom, transparent 0%, black ${fadeStop}, black calc(100% - ${fadeStop}), transparent 100%)`;
 
+  const last = items.length - 1;
+  const handleKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const step: Record<string, number> = { ArrowUp: -1, ArrowDown: 1, PageUp: -5, PageDown: 5 };
+    let next: number;
+    if (e.key in step) next = value + step[e.key]!;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = last;
+    else return;
+    e.preventDefault();
+    next = Math.max(0, Math.min(last, next));
+    if (next !== value) {
+      onChange(next);
+      window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+    }
+  };
+
   return (
-    <div className="relative" style={{ height: containerHeight, overflow: 'hidden' }}>
+    <div
+      className="relative rounded-xl focus-ring"
+      style={{ height: containerHeight, overflow: 'hidden' }}
+      role="spinbutton"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={last}
+      aria-valuetext={items[value]}
+      onKeyDown={handleKey}
+    >
       {/* Scrollable area — mask applied here directly so it works inside the compositor layer */}
       <div
+        aria-hidden="true"
+        tabIndex={-1}
         ref={containerRef}
         className="absolute inset-0 overflow-y-scroll"
         style={{

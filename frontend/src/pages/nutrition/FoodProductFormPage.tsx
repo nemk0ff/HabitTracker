@@ -15,7 +15,7 @@ function num(s: string): number {
 }
 
 export function FoodProductFormPage() {
-  const { foodId, navigate } = useNavStore();
+  const foodId = useNavStore((s) => s.foodId);
   const isEdit = foodId !== null;
 
   const [name, setName] = useState('');
@@ -47,7 +47,7 @@ export function FoodProductFormPage() {
     });
   }, [isEdit, foodId]);
 
-  const back = () => navigate('food-add');
+  const back = useNavStore((s) => s.back);
 
   const values = [kcal, protein, fat, carbs].map(num);
   const pg = num(portionGrams);

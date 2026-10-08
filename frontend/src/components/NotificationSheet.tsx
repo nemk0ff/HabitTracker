@@ -1,6 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WheelPicker } from './WheelPicker';
+import { BottomSheet } from './nutrition/BottomSheet';
+import { readableOn, legibleColor, useIsDark } from '../utils/colors';
 import type { Reminder, DayOfWeek } from '../types';
 
 interface Props {
@@ -86,6 +88,11 @@ export function NotificationSheet({ open, onClose, reminder, onSave, color }: Pr
   }, [reminder, open]);
 
   const daysLabel = useMemo(() => getDaysLabel(days), [days]);
+  const isDark = useIsDark();
+  const textColor = legibleColor(color, isDark);
+  const titleId = useId();
+  const snoozeId = useId();
+  const snoozeHintId = useId();
 
   const toggleDay = (day: DayOfWeek) => {
     setDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
@@ -100,142 +107,144 @@ export function NotificationSheet({ open, onClose, reminder, onSave, color }: Pr
   };
 
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 z-40"
-            onClick={onClose}
-          />
-          <motion.div
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-50 bg-tg-bg rounded-t-2xl max-h-[85vh] overflow-y-auto"
-          >
-            <div className="p-5">
-              {/* Handle */}
-              <div className="w-9 h-1 bg-tg-hint/30 rounded-full mx-auto mb-5" />
+    <BottomSheet open={open} onClose={onClose} label="Уведомления" maxHeightClass="max-h-[85vh]">
+      {/* Title + Toggle */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 id={titleId} className="text-lg font-bold text-tg-text">Уведомления</h2>
+        <Switch checked={enabled} onChange={setEnabled} color={color} labelledBy={titleId} />
+      </div>
 
-              {/* Title + Toggle */}
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-bold text-tg-text">Уведомления</h2>
-                <button
-                  onClick={() => setEnabled(!enabled)}
-                  className="relative w-12 h-7 rounded-full transition-colors duration-200"
-                  style={{ backgroundColor: enabled ? color : 'rgba(128,128,128,0.3)' }}
-                >
-                  <div
-                    className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform duration-200"
-                    style={{ transform: enabled ? 'translateX(22px)' : 'translateX(2px)' }}
-                  />
-                </button>
-              </div>
+      <div
+        className={`transition-opacity duration-200 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}
+        aria-disabled={!enabled}
+        inert={!enabled}
+      >
+        {/* Time Picker (iOS-style wheels) */}
+        <div className="flex items-center justify-center gap-1 mb-6">
+          <div className="w-24">
+            <WheelPicker items={HOURS} value={hour} onChange={setHour} label="Часы" />
+          </div>
+          <span className="text-2xl font-bold text-tg-text" aria-hidden="true">:</span>
+          <div className="w-24">
+            <WheelPicker items={MINUTES} value={minute} onChange={setMinute} label="Минуты" />
+          </div>
+        </div>
 
-              <div className={`transition-opacity duration-200 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                {/* Time Picker (iOS-style wheels) */}
-                <div className="flex items-center justify-center gap-1 mb-6">
-                  <div className="w-24">
-                    <WheelPicker items={HOURS} value={hour} onChange={setHour} />
-                  </div>
-                  <span className="text-2xl font-bold text-tg-text">:</span>
-                  <div className="w-24">
-                    <WheelPicker items={MINUTES} value={minute} onChange={setMinute} />
-                  </div>
-                </div>
+        {/* Repeat selector */}
+        <button
+          onClick={() => setShowDayPicker(!showDayPicker)}
+          aria-expanded={showDayPicker}
+          className="w-full flex items-center justify-between px-4 py-3.5 rounded-xl bg-tg-secondary mb-2"
+        >
+          <span className="text-sm font-medium text-tg-text">Повтор</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm" style={{ color: textColor }}>{daysLabel}</span>
+            <svg
+              width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+              className={`transition-transform duration-200 ${showDayPicker ? 'rotate-90' : ''}`}
+            >
+              <path d="M4.5 2.5L7.5 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-tg-hint" />
+            </svg>
+          </div>
+        </button>
 
-                {/* Repeat selector */}
-                <button
-                  onClick={() => setShowDayPicker(!showDayPicker)}
-                  className="w-full flex items-center justify-between px-4 py-3.5 rounded-xl bg-tg-secondary mb-2"
-                >
-                  <span className="text-sm font-medium text-tg-text">Повтор</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm" style={{ color }}>{daysLabel}</span>
-                    <svg
-                      width="12" height="12" viewBox="0 0 12 12" fill="none"
-                      className={`transition-transform duration-200 ${showDayPicker ? 'rotate-90' : ''}`}
+        {/* Days grid */}
+        <AnimatePresence>
+          {showDayPicker && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="pt-2 pb-4 flex flex-col gap-1">
+                {ALL_DAYS.map((d) => {
+                  const active = days.includes(d.key);
+                  return (
+                    <button
+                      key={d.key}
+                      aria-pressed={active}
+                      onClick={() => {
+                        toggleDay(d.key);
+                        window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+                      }}
+                      className="flex items-center justify-between px-4 py-3 min-h-[44px] rounded-xl transition-colors"
+                      style={{
+                        backgroundColor: active ? `${color}18` : 'transparent',
+                      }}
                     >
-                      <path d="M4.5 2.5L7.5 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-tg-hint" />
-                    </svg>
-                  </div>
-                </button>
-
-                {/* Days grid */}
-                <AnimatePresence>
-                  {showDayPicker && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="pt-2 pb-4 flex flex-col gap-1">
-                        {ALL_DAYS.map((d) => {
-                          const active = days.includes(d.key);
-                          return (
-                            <button
-                              key={d.key}
-                              onClick={() => {
-                                toggleDay(d.key);
-                                window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
-                              }}
-                              className="flex items-center justify-between px-4 py-3 rounded-xl transition-colors"
-                              style={{
-                                backgroundColor: active ? `${color}18` : 'transparent',
-                              }}
-                            >
-                              <span className="text-sm text-tg-text">{`Каждый ${d.label.toLowerCase()}`}</span>
-                              {active && (
-                                <svg width="16" height="16" viewBox="0 0 16 16" fill={color}>
-                                  <path d="M13.3 4.3L6.5 11.1L2.7 7.3L3.7 6.3L6.5 9.1L12.3 3.3L13.3 4.3Z" />
-                                </svg>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Snooze toggle */}
-                <div className="flex items-center justify-between px-4 py-3.5 rounded-xl bg-tg-secondary mt-2 mb-6">
-                  <div>
-                    <span className="text-sm font-medium text-tg-text">Повторение сигнала</span>
-                    <p className="text-xs text-tg-hint mt-0.5">Каждые 5 мин, пока не отметишь</p>
-                  </div>
-                  <button
-                    onClick={() => setSnooze(!snooze)}
-                    className="relative w-12 h-7 rounded-full transition-colors duration-200 shrink-0"
-                    style={{ backgroundColor: snooze ? color : 'rgba(128,128,128,0.3)' }}
-                  >
-                    <div
-                      className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform duration-200"
-                      style={{ transform: snooze ? 'translateX(22px)' : 'translateX(2px)' }}
-                    />
-                  </button>
-                </div>
+                      <span className="text-sm text-tg-text">{`Каждый ${d.label.toLowerCase()}`}</span>
+                      {active && (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill={textColor} aria-hidden="true">
+                          <path d="M13.3 4.3L6.5 11.1L2.7 7.3L3.7 6.3L6.5 9.1L12.3 3.3L13.3 4.3Z" />
+                        </svg>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-              {/* Save */}
-              <button
-                onClick={handleSave}
-                className="w-full py-3 rounded-xl text-white font-semibold text-sm active:opacity-80 transition-opacity"
-                style={{ backgroundColor: color }}
-              >
-                Сохранить
-              </button>
+        {/* Snooze toggle */}
+        <div className="flex items-center justify-between pl-4 pr-2 py-1.5 rounded-xl bg-tg-secondary mt-2 mb-6">
+          <div>
+            <span id={snoozeId} className="text-sm font-medium text-tg-text">Повторение сигнала</span>
+            <p id={snoozeHintId} className="text-xs text-hint-strong mt-0.5">Каждые 5 мин, пока не отметишь</p>
+          </div>
+          <Switch checked={snooze} onChange={setSnooze} color={color} labelledBy={snoozeId} describedBy={snoozeHintId} />
+        </div>
+      </div>
 
-              <div className="h-6" />
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      {/* Save */}
+      <button
+        onClick={handleSave}
+        className="w-full py-3 rounded-xl font-semibold text-sm active:opacity-80 transition-opacity"
+        style={{ backgroundColor: color, color: readableOn(color) }}
+      >
+        Сохранить
+      </button>
+    </BottomSheet>
+  );
+}
+
+/** iOS-style switch: role="switch", 44px hit area, off track ≥3:1 (`--switch-off`). */
+function Switch({
+  checked,
+  onChange,
+  color,
+  labelledBy,
+  describedBy,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  color: string;
+  labelledBy: string;
+  describedBy?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      onClick={() => {
+        onChange(!checked);
+        window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+      }}
+      className="shrink-0 h-11 w-14 flex items-center justify-center rounded-full focus-ring"
+    >
+      <span
+        className="relative block w-12 h-7 rounded-full transition-colors duration-200"
+        style={{ backgroundColor: checked ? color : 'var(--switch-off)' }}
+      >
+        <span
+          className="absolute top-0.5 left-0 w-6 h-6 rounded-full bg-white shadow transition-transform duration-200"
+          style={{ transform: checked ? 'translateX(22px)' : 'translateX(2px)' }}
+        />
+      </span>
+    </button>
   );
 }

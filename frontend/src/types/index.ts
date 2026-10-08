@@ -30,6 +30,10 @@ export interface User {
     /** "Добавить текстом" through the developer's Hermes agent. */
     agentLog: boolean;
   };
+  /** Finished (or skipped) the first-launch template picker. */
+  onboarded?: boolean;
+  /** Evening check-in time, local HH:MM; null = no check-in message. */
+  checkinTime?: string | null;
 }
 
 export interface AdminUserGroup {
@@ -57,6 +61,7 @@ export interface Reminder {
 
 export type Screen =
   | 'hub'
+  | 'onboarding'
   | 'home'
   | 'habit'
   | 'create'

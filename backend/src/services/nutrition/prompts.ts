@@ -12,6 +12,7 @@ import type { Context } from 'grammy';
 import { prisma } from '../../db.js';
 import { bot } from '../bot.js';
 import { hasNutritionAccess } from '../../utils/features.js';
+import { forEachSafe } from '../../utils/safe.js';
 import { track } from '../analytics.js';
 import { computePlan } from './model.js';
 
@@ -29,6 +30,24 @@ function dayDate(date: string): Date {
   return new Date(date + 'T00:00:00.000Z');
 }
 
+/** A late tap is fine, but only for the last few days (and never the future). */
+const MAX_CALLBACK_AGE_DAYS = 3;
+
+function isRecentDate(date: string): boolean {
+  const d = dayDate(date).getTime();
+  if (Number.isNaN(d)) return false;
+  const today = dayDate(todayMsk()).getTime();
+  return d <= today && d >= today - MAX_CALLBACK_AGE_DAYS * 86_400_000;
+}
+
+/** Runs `fn` for every recipient; one user's failure never stops the rest. */
+async function forEachRecipient(
+  label: string,
+  fn: (g: Awaited<ReturnType<typeof recipients>>[number]) => Promise<void>,
+): Promise<void> {
+  await forEachSafe(await recipients(), `[prompts] ${label}`, (g) => `user ${g.userId}`, fn);
+}
+
 function fmtKg(kg: number): string {
   return kg.toFixed(1).replace('.', ',');
 }
@@ -44,7 +63,7 @@ async function send(chatId: bigint, text: string, keyboard: Button[][]) {
       reply_markup: { inline_keyboard: keyboard.filter((row) => row.length > 0) as any },
     });
   } catch (e) {
-    console.error('[prompts] send failed:', e);
+    console.error(`[prompts] send to ${chatId} failed:`, e);
   }
 }
 
@@ -55,7 +74,7 @@ const openDiaryRow = (): Button[] => (WEBAPP_URL ? [{ text: '📱 Открыть
 /** 09:00 MSK: hours slept + this morning's weight (±0.5 kg from the last weigh-in — a mechanical scale). */
 export async function sendMorningPrompts(): Promise<void> {
   const date = todayMsk();
-  for (const g of await recipients()) {
+  await forEachRecipient('morning', async (g) => {
     if (g.sleepHabitId) {
       const slept = await prisma.habitEntry.findFirst({ where: { habitId: g.sleepHabitId, date: dayDate(date) } });
       if (!slept) {
@@ -76,31 +95,31 @@ export async function sendMorningPrompts(): Promise<void> {
         WEBAPP_URL ? [{ text: 'Другой вес', web_app: { url: WEBAPP_URL } }] : [],
       ]);
     }
-  }
+  });
 }
 
 /** 21:00 MSK: was there a workout today (skipped if already marked). */
 export async function sendTrainingPrompt(): Promise<void> {
   const date = todayMsk();
-  for (const g of await recipients()) {
-    if (!g.trainingHabitId) continue;
+  await forEachRecipient('training', async (g) => {
+    if (!g.trainingHabitId) return;
     const done = await prisma.habitEntry.findFirst({ where: { habitId: g.trainingHabitId, date: dayDate(date) } });
-    if (done) continue;
+    if (done) return;
     await send(g.user.telegramId, '💪 Была сегодня тренировка?', [
       [
         { text: 'Да', callback_data: `tr:${date}:1` },
         { text: 'Нет', callback_data: `tr:${date}:0` },
       ],
     ]);
-  }
+  });
 }
 
 /** 22:00 MSK: confirm the diary is complete, so the model can trust the day. */
 export async function sendDayCompletePrompt(): Promise<void> {
   const date = todayMsk();
-  for (const g of await recipients()) {
+  await forEachRecipient('day complete', async (g) => {
     const mark = await prisma.dayMark.findUnique({ where: { userId_date: { userId: g.userId, date: dayDate(date) } } });
-    if (mark) continue;
+    if (mark) return;
     const sum = await prisma.foodLogEntry.aggregate({
       where: { userId: g.userId, date: dayDate(date) },
       _sum: { kcal: true },
@@ -108,7 +127,7 @@ export async function sendDayCompletePrompt(): Promise<void> {
     });
     if (sum._count === 0) {
       await send(g.user.telegramId, '🍽 Сегодня в дневнике пусто. Запишешь, что ел?', [openDiaryRow()]);
-      continue;
+      return;
     }
     const plan = await computePlan(g.userId, date);
     const target = plan.todayKcal ?? g.kcal;
@@ -117,13 +136,14 @@ export async function sendDayCompletePrompt(): Promise<void> {
       [{ text: '✅ Да, день полный', callback_data: `dc:${date}` }],
       openDiaryRow(),
     ]);
-  }
+  });
 }
 
 export function startDailyPrompts(): void {
-  cron.schedule('0 6 * * *', () => void sendMorningPrompts().catch((e) => console.error('[prompts] morning:', e)));
-  cron.schedule('0 18 * * *', () => void sendTrainingPrompt().catch((e) => console.error('[prompts] training:', e)));
-  cron.schedule('0 19 * * *', () => void sendDayCompletePrompt().catch((e) => console.error('[prompts] day:', e)));
+  const utc = { timezone: 'UTC' };
+  cron.schedule('0 6 * * *', () => void sendMorningPrompts().catch((e) => console.error('[prompts] morning:', e)), utc);
+  cron.schedule('0 18 * * *', () => void sendTrainingPrompt().catch((e) => console.error('[prompts] training:', e)), utc);
+  cron.schedule('0 19 * * *', () => void sendDayCompletePrompt().catch((e) => console.error('[prompts] day:', e)), utc);
 }
 
 // ─── Callback handling ────────────────────────────────────────────────────────
@@ -135,36 +155,46 @@ async function resolveGoal(ctx: Context) {
   return { user, goal: await prisma.nutritionGoal.findUnique({ where: { userId: user.id } }) };
 }
 
-/** Handles `sl:` / `wt:` / `tr:` / `dc:` buttons; returns the confirmation text or null if not ours. */
-export async function handlePromptCallback(ctx: Context, data: string): Promise<string | null> {
+/** `alert`: the tap was rejected — show a popup and leave the question message as is. */
+export interface PromptCallbackResult {
+  text: string;
+  alert?: boolean;
+}
+
+const reject = (text: string): PromptCallbackResult => ({ text, alert: true });
+
+/** Handles `sl:` / `wt:` / `tr:` / `dc:` buttons; returns the confirmation (or rejection) or null if not ours. */
+export async function handlePromptCallback(ctx: Context, data: string): Promise<PromptCallbackResult | null> {
   const m = data.match(/^(sl|wt|tr|dc):(\d{4}-\d{2}-\d{2})(?::([\d.]+))?$/);
   if (!m) return null;
   const [, kind, date, value] = m;
+  if (!isRecentDate(date!)) return reject('Этот вопрос устарел — отметь в трекере');
   const who = await resolveGoal(ctx);
-  if (!who) return 'Недоступно';
+  if (!who) return reject('Недоступно');
   const { user, goal } = who;
   const d = dayDate(date!);
 
   if (kind === 'sl' && goal?.sleepHabitId) {
     const minutes = Math.round(Number(value));
+    if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) return reject('Странное время сна');
     await prisma.habitEntry.upsert({
       where: { habitId_date: { habitId: goal.sleepHabitId, date: d } },
       update: { value: minutes },
       create: { habitId: goal.sleepHabitId, date: d, value: minutes },
     });
     track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { prompt: 'sleep' } });
-    return `😴 Записал сон: ${minutes / 60} ч`;
+    return { text: `😴 Записал сон: ${minutes / 60} ч` };
   }
   if (kind === 'wt') {
     const kg = Math.round(Number(value) * 10) / 10;
-    if (!(kg >= 20 && kg <= 400)) return 'Странный вес';
+    if (!(kg >= 20 && kg <= 400)) return reject('Странный вес');
     await prisma.weightEntry.upsert({
       where: { userId_date: { userId: user.id, date: d } },
       update: { weightKg: kg },
       create: { userId: user.id, date: d, weightKg: kg },
     });
     track({ userId: user.id, event: 'weight_logged', category: 'bot' });
-    return `⚖️ Записал вес: ${fmtKg(kg)} кг`;
+    return { text: `⚖️ Записал вес: ${fmtKg(kg)} кг` };
   }
   if (kind === 'tr' && goal?.trainingHabitId) {
     if (value === '1') {
@@ -174,9 +204,9 @@ export async function handlePromptCallback(ctx: Context, data: string): Promise<
         create: { habitId: goal.trainingHabitId, date: d, value: 1 },
       });
       track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { prompt: 'training' } });
-      return '💪 Отметил тренировку';
+      return { text: '💪 Отметил тренировку' };
     }
-    return 'Ок, день отдыха';
+    return { text: 'Ок, день отдыха' };
   }
   if (kind === 'dc') {
     await prisma.dayMark.upsert({
@@ -185,7 +215,7 @@ export async function handlePromptCallback(ctx: Context, data: string): Promise<
       create: { userId: user.id, date: d, complete: true },
     });
     track({ userId: user.id, event: 'day_marked_complete', category: 'bot', label: date });
-    return '✅ День отмечен как полный';
+    return { text: '✅ День отмечен как полный' };
   }
-  return 'Привычка не привязана — выбери её в «Цель и вес»';
+  return reject('Привычка не привязана — выбери её в «Цель и вес»');
 }

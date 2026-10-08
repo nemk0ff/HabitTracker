@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, GrammyError, HttpError } from 'grammy';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { prisma } from '../db.js';
 import { track } from './analytics.js';
@@ -28,6 +28,10 @@ async function resolveUserId(telegramId: number | undefined): Promise<number | n
   return user?.id ?? null;
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function openTrackerOptions() {
   if (!WEBAPP_URL) return {};
   return {
@@ -43,8 +47,13 @@ bot.command('start', async (ctx) => {
   const userId = await resolveUserId(ctx.from?.id);
   track({ userId, event: 'command_start', category: 'bot' });
 
-  const name = ctx.from?.first_name ?? 'друг';
-  const text = `Привет, ${name}! 👋\n\nЯ помогу тебе отслеживать привычки.\nОткрой трекер, чтобы начать.`;
+  const name = escapeHtml(ctx.from?.first_name ?? 'друг');
+  const text =
+    `Привет, ${name}! 👋\n\n` +
+    `✅ Отмечай привычки в один тап\n` +
+    `🔔 Вечером напомню сам — отметить можно прямо здесь, в чате\n` +
+    `📈 Серии и прогресс по неделям всегда перед глазами\n\n` +
+    `Открой трекер и добавь первую привычку 👇`;
   await ctx.reply(text, { parse_mode: 'HTML', ...openTrackerOptions() });
 });
 
@@ -106,23 +115,42 @@ bot.command('week', async (ctx) => {
 
 /** One-tap answers to the daily prompts (sleep / weight / training / day complete). */
 bot.callbackQuery(/^(sl|wt|tr|dc):/, async (ctx) => {
-  const { handlePromptCallback } = await import('./nutrition/prompts.js');
-  const result = await handlePromptCallback(ctx, ctx.callbackQuery.data ?? '');
-  await ctx.answerCallbackQuery(result ?? '');
-  if (result) await ctx.editMessageText(result).catch(() => {});
+  try {
+    const { handlePromptCallback } = await import('./nutrition/prompts.js');
+    const result = await handlePromptCallback(ctx, ctx.callbackQuery.data ?? '');
+    if (!result) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    if (result.alert) {
+      // Invalid / outdated button: say so, but leave the question in the chat.
+      await ctx.answerCallbackQuery({ text: result.text, show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery(result.text);
+    await ctx.editMessageText(result.text).catch(() => {});
+  } catch (e) {
+    console.error(`[bot] prompt callback failed (from ${ctx.from.id}, data ${ctx.callbackQuery.data}):`, e);
+    await ctx.answerCallbackQuery({ text: 'Не получилось записать, попробуй ещё раз', show_alert: true }).catch(() => {});
+  }
 });
 
 /** "↩️ Отменить" under a text-log result: removes the entries (and products) it created. */
 bot.callbackQuery(/^tlu:(.+)$/, async (ctx) => {
-  const userId = await resolveUserId(ctx.from.id);
-  const { undoJob } = await import('./nutrition/textLog.js');
-  const ok = userId !== null && (await undoJob(userId, ctx.match[1]!));
-  await ctx.answerCallbackQuery(ok ? 'Отменено' : 'Нечего отменять');
-  if (ok) {
-    const text = ctx.callbackQuery.message && 'text' in ctx.callbackQuery.message ? ctx.callbackQuery.message.text : '';
-    await ctx.editMessageText(`${text}
+  try {
+    const userId = await resolveUserId(ctx.from.id);
+    const { undoJob } = await import('./nutrition/textLog.js');
+    const ok = userId !== null && (await undoJob(userId, ctx.match[1]!));
+    await ctx.answerCallbackQuery(ok ? 'Отменено' : 'Нечего отменять');
+    if (ok) {
+      const text = ctx.callbackQuery.message && 'text' in ctx.callbackQuery.message ? ctx.callbackQuery.message.text : '';
+      await ctx.editMessageText(`${text}
 
 ↩️ Отменено — записи удалены`).catch(() => {});
+    }
+  } catch (e) {
+    console.error(`[bot] text-log undo failed (from ${ctx.from.id}):`, e);
+    await ctx.answerCallbackQuery({ text: 'Не получилось отменить, попробуй ещё раз', show_alert: true }).catch(() => {});
   }
 });
 
@@ -161,9 +189,36 @@ async function logFoodFromChat(chatId: number, messageId: number, userId: number
       await bot.api.editMessageText(chatId, messageId, `❌ ${job.error ?? 'Не получилось записать'}`);
     }
   } catch (e) {
-    console.error('[bot] food log failed:', e);
+    console.error(`[bot] food log failed (user ${userId}):`, e);
+    // Never leave the "⏳" status hanging: replace it, or send a fresh message if editing fails.
+    const errorText = '❌ Не получилось записать — попробуй ещё раз или добавь в трекере';
+    try {
+      await bot.api.editMessageText(chatId, messageId, errorText);
+    } catch {
+      await bot.api.sendMessage(chatId, errorText).catch((err) => console.error('[bot] food log error notice failed:', err));
+    }
   }
 }
+
+// ─── Errors ───────────────────────────────────────────────────────────────────
+
+/** Without this, one throwing handler stops long polling while pm2 still shows "online". */
+bot.catch(async (err) => {
+  const ctx = err.ctx;
+  const e = err.error;
+  const where = `update ${ctx.update.update_id} from ${ctx.from?.id ?? '?'}`;
+  if (e instanceof GrammyError) {
+    console.error(`[bot] Telegram API error in ${where}: ${e.description}`);
+  } else if (e instanceof HttpError) {
+    console.error(`[bot] Network error in ${where}:`, e.error);
+  } else {
+    console.error(`[bot] Handler error in ${where}:`, e);
+  }
+  // Stop the spinner on a tapped button; the user just sees a short notice.
+  if (ctx.callbackQuery) {
+    await ctx.answerCallbackQuery({ text: 'Что-то пошло не так, попробуй ещё раз' }).catch(() => {});
+  }
+});
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
 
@@ -183,7 +238,7 @@ export async function sendMessage(
   chatId: number | string,
   text: string,
   webAppUrl?: string,
-): Promise<void> {
+): Promise<boolean> {
   const options: any = { parse_mode: 'HTML' as const };
   if (webAppUrl) {
     options.reply_markup = {
@@ -192,7 +247,9 @@ export async function sendMessage(
   }
   try {
     await bot.api.sendMessage(chatId, text, options);
+    return true;
   } catch (err) {
     console.error(`Failed to send message to ${chatId}:`, err);
+    return false;
   }
 }

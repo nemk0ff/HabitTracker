@@ -33,7 +33,7 @@ export function FoodStatsPage() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const today = toDateString(new Date());
 
-  useBackButton(() => navigate('food-day'));
+  useBackButton(useNavStore((s) => s.back));
   useMainButton(null, () => {});
 
   useEffect(() => {

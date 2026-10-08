@@ -43,7 +43,7 @@ const num = (s: string) => Number(s.replace(',', '.'));
 const str = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
 export function FoodGoalPage() {
-  const navigate = useNavStore((s) => s.navigate);
+  const back = useNavStore((s) => s.back);
   const { goal, goalLoaded, loadGoal, setGoal } = useNutritionStore();
   const habits = useHabitsStore((s) => s.habits);
   const today = toDateString(new Date());
@@ -110,7 +110,7 @@ export function FoodGoalPage() {
         sleepHabitId,
       });
       haptic('success');
-      navigate('food-day');
+      back();
     } catch {
       haptic('error');
     } finally {
@@ -118,7 +118,7 @@ export function FoodGoalPage() {
     }
   };
 
-  useBackButton(() => navigate('food-day'));
+  useBackButton(back);
   useMainButton(valid ? 'Сохранить цель' : null, save, { progress: saving });
 
   const currentWeight = weights.length ? weights[weights.length - 1]!.weightKg : opt(startWeight);

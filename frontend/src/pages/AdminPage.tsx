@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { useNavStore } from '../stores/navStore';
 import { HabitCard } from '../components/HabitCard';
 import { fetchAllHabits } from '../api/admin';
+import { useBackButton, useMainButton } from '../hooks/useTelegramButtons';
 import type { AdminUserGroup } from '../types';
 
 function relativeTime(iso: string | null): string {
@@ -23,24 +24,12 @@ function userTitle(u: AdminUserGroup['user']): string {
 }
 
 export function AdminPage() {
-  const navigate = useNavStore((s) => s.navigate);
+  const back = useNavStore((s) => s.back);
   const [groups, setGroups] = useState<AdminUserGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const webapp = window.Telegram?.WebApp;
-    if (webapp) {
-      webapp.BackButton?.show?.();
-      const handler = () => navigate('home');
-      webapp.BackButton?.onClick?.(handler);
-      webapp.MainButton?.hide?.();
-
-      return () => {
-        webapp.BackButton?.offClick?.(handler);
-        webapp.BackButton?.hide?.();
-      };
-    }
-  }, [navigate]);
+  useBackButton(back);
+  useMainButton(null, () => {});
 
   useEffect(() => {
     fetchAllHabits()

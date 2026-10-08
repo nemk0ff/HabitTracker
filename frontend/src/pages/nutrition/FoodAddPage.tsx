@@ -33,7 +33,7 @@ export function FoodAddPage() {
   const [mine, setMine] = useState<Food[]>([]);
   const [picked, setPicked] = useState<Food | null>(null);
 
-  const back = () => navigate('food-day');
+  const back = useNavStore((s) => s.back);
   useBackButton(back);
   useMainButton(null, () => {});
 

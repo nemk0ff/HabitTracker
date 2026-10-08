@@ -10,6 +10,7 @@ import {
   subWeeks,
   isToday,
   differenceInCalendarDays,
+  parseISO,
 } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
@@ -19,6 +20,16 @@ export function formatMonthYear(date: Date): string {
 
 export function toDateString(date: Date): string {
   return format(date, 'yyyy-MM-dd');
+}
+
+/** Shifts a YYYY-MM-DD date by `days` (negative = back). */
+export function shiftDate(date: string, days: number): string {
+  return toDateString(addDays(parseISO(date), days));
+}
+
+/** "среда, 7 октября" → "Среда, 7 октября" (CSS `capitalize` would also capitalize the month). */
+export function capitalizeFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export function getMonthGrid(year: number, month: number): (Date | null)[][] {

@@ -15,7 +15,7 @@ import {
   Utensils,
   UtensilsCrossed,
 } from 'lucide-react';
-import { addDays, parseISO } from 'date-fns';
+import { useShallow } from 'zustand/react/shallow';
 import { useNavStore } from '../../stores/navStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
 import { CalorieRing } from '../../components/nutrition/CalorieRing';
@@ -25,22 +25,30 @@ import { FoodCalendarSheet } from '../../components/nutrition/FoodCalendarSheet'
 import { WeightSheet } from '../../components/nutrition/WeightSheet';
 import { InsightsCard } from '../../components/nutrition/InsightsCard';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
-import { toDateString } from '../../utils/dates';
+import { capitalizeFirst, shiftDate, toDateString } from '../../utils/dates';
 import { MEALS, fmt, formatDayTitle, mealByTime, mealLabel, sumMacros } from '../../utils/nutrition';
 import { fetchFrequent, type FrequentFood } from '../../api/nutrition';
 import { toast } from '../../stores/toastStore';
 import type { FoodLogEntry, Meal, NutritionGoal } from '../../types';
 
-function shiftDate(date: string, days: number): string {
-  return toDateString(addDays(parseISO(date), days));
-}
-
 export function FoodDayPage() {
-  const { foodDate: date, navigate } = useNavStore();
-  const { days, plans, loadDay, loadPlan, saveWeight, updateEntry, removeEntry, copyDay, addEntry, setDayComplete } =
-    useNutritionStore();
-  const day = days[date];
-  const plan = plans[date];
+  const { date, navigate, back } = useNavStore(
+    useShallow((s) => ({ date: s.foodDate, navigate: s.navigate, back: s.back })),
+  );
+  const day = useNutritionStore((s) => s.days[date]);
+  const plan = useNutritionStore((s) => s.plans[date]);
+  const { loadDay, loadPlan, saveWeight, updateEntry, removeEntry, copyDay, addEntry, setDayComplete } = useNutritionStore(
+    useShallow((s) => ({
+      loadDay: s.loadDay,
+      loadPlan: s.loadPlan,
+      saveWeight: s.saveWeight,
+      updateEntry: s.updateEntry,
+      removeEntry: s.removeEntry,
+      copyDay: s.copyDay,
+      addEntry: s.addEntry,
+      setDayComplete: s.setDayComplete,
+    })),
+  );
   const today = toDateString(new Date());
 
   const [editing, setEditing] = useState<FoodLogEntry | null>(null);
@@ -49,10 +57,10 @@ export function FoodDayPage() {
   const [frequent, setFrequent] = useState<FrequentFood[]>([]);
   const quickMeal: Meal = date === today ? mealByTime() : 'lunch';
   const prevDate = shiftDate(date, -1);
-  const prevDay = days[prevDate];
+  const prevDay = useNutritionStore((s) => s.days[prevDate]);
   const [weightOpen, setWeightOpen] = useState(false);
 
-  useBackButton(() => navigate('hub'));
+  useBackButton(back);
   useMainButton('Добавить еду', () =>
     navigate('food-add', { foodMeal: date === today ? mealByTime() : 'lunch' }),
   );
@@ -96,7 +104,14 @@ export function FoodDayPage() {
     : null, [editing]);
 
   useEffect(() => {
-    fetchFrequent(quickMeal).then(setFrequent).catch(() => setFrequent([]));
+    // Fast date flipping changes quickMeal; a slower earlier response must not win.
+    let ignore = false;
+    fetchFrequent(quickMeal)
+      .then((f) => !ignore && setFrequent(f))
+      .catch(() => !ignore && setFrequent([]));
+    return () => {
+      ignore = true;
+    };
   }, [quickMeal]);
 
   /** One tap: the food with its last-used portion, undoable from the toast. */
@@ -372,8 +387,4 @@ const MEAL_ICONS: Record<Meal, typeof Coffee> = { breakfast: Coffee, lunch: Soup
 function MealIcon({ meal }: { meal: Meal }) {
   const Icon = MEAL_ICONS[meal];
   return <Icon size={20} className="text-tg-hint" aria-hidden />;
-}
-
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }

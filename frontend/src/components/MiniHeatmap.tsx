@@ -20,17 +20,14 @@ export function MiniHeatmap({ entries, color, binary = false, weeks = 18, showDa
     [entries],
   );
 
-  const isDark =
-    typeof window !== 'undefined' &&
-    window.Telegram?.WebApp?.colorScheme === 'dark';
-
   const cellSize = 11;
   const gap = 3;
   const labelWidth = showDayLabels ? 18 : 0;
   const headerHeight = 16;
 
   return (
-    <div className="select-none">
+    // Decorative overview: the card/screen around it carries the accessible text.
+    <div className="select-none" aria-hidden="true">
       {/* Month labels row */}
       <div className="flex relative" style={{ height: headerHeight, marginLeft: labelWidth + (labelWidth > 0 ? gap : 0) }}>
         {monthLabels.map((m) => (
@@ -74,7 +71,7 @@ export function MiniHeatmap({ entries, color, binary = false, weeks = 18, showDa
                 const value = entryMap.get(dateStr) ?? 0;
                 const bg = value > 0
                   ? getHeatmapColor(color, binary ? 3 : value)
-                  : getEmptyColor(!!isDark);
+                  : getEmptyColor();
                 const isTodayCell = isToday(day);
 
                 return (
@@ -115,6 +112,8 @@ declare global {
           selectionChanged: () => void;
         };
         close: () => void;
+        onEvent?: (event: string, cb: () => void) => void;
+        offEvent?: (event: string, cb: () => void) => void;
       };
     };
   }

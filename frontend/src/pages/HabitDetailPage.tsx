@@ -1,7 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
+import { Bell, Pencil } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
+import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { Heatmap } from '../components/Heatmap';
 import { StatCard } from '../components/StatCard';
 import { NotificationSheet } from '../components/NotificationSheet';
@@ -15,10 +18,14 @@ import { SleepChart } from '../components/SleepChart';
 import { setHabitValue } from '../utils/habitActions';
 import type { Reminder, DayOfWeek } from '../types';
 
+const HOURS_LEVEL_LABELS = ['меньше 5 ч', '5–7 ч', '7+ ч'];
+
 export function HabitDetailPage() {
-  const { habits, removeHabit } = useHabitsStore();
-  const { selectedHabitId, navigate } = useNavStore();
-  const habit = habits.find((h) => h.id === selectedHabitId);
+  const { selectedHabitId, navigate, back } = useNavStore(
+    useShallow((s) => ({ selectedHabitId: s.selectedHabitId, navigate: s.navigate, back: s.back })),
+  );
+  const habit = useHabitsStore((s) => s.habits.find((h) => h.id === selectedHabitId));
+  const removeHabit = useHabitsStore((s) => s.removeHabit);
   const [showConfirm, setShowConfirm] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [reminder, setReminder] = useState<Reminder | null>(null);
@@ -39,21 +46,11 @@ export function HabitDetailPage() {
     loadReminder();
   }, [loadReminder]);
 
-  useEffect(() => {
-    const webapp = window.Telegram?.WebApp;
-    if (webapp) {
-      webapp.BackButton?.show?.();
-      const handler = () => navigate('home');
-      webapp.BackButton?.onClick?.(handler);
+  // Back returns to wherever the habit was opened from (Today or the list).
+  useBackButton(back);
+  useMainButton(null, () => {});
 
-      webapp.MainButton?.hide?.();
-
-      return () => {
-        webapp.BackButton?.offClick?.(handler);
-        webapp.BackButton?.hide?.();
-      };
-    }
-  }, [navigate]);
+  const heatEntries = useMemo(() => (habit ? levelEntries(habit) : []), [habit]);
 
   if (!habit) {
     return (
@@ -96,7 +93,7 @@ export function HabitDetailPage() {
 
   const handleDelete = async () => {
     await removeHabit(habit.id);
-    window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('warning');
+    haptic('warning');
   };
 
   const handleSaveReminder = async (data: { enabled: boolean; days: DayOfWeek[]; time: string; snooze: boolean }) => {
@@ -126,30 +123,23 @@ export function HabitDetailPage() {
           <button
             onClick={() => {
               setNotifOpen(true);
-              window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
+              haptic('light');
             }}
+            aria-label={reminder?.enabled ? 'Напоминание включено' : 'Напоминание'}
             className="w-9 h-9 rounded-xl flex items-center justify-center bg-tg-secondary active:opacity-70 transition-opacity"
           >
             {reminder?.enabled ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill={habit.color} stroke={habit.color} strokeWidth="1.5">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
+              <Bell size={18} fill={habit.color} color={habit.color} strokeWidth={1.5} aria-hidden />
             ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
+              <Bell size={18} strokeWidth={1.5} aria-hidden />
             )}
           </button>
           <button
             onClick={() => navigate('edit', { selectedHabitId: habit.id })}
+            aria-label="Редактировать"
             className="w-9 h-9 rounded-xl flex items-center justify-center bg-tg-secondary active:opacity-70 transition-opacity"
           >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M13.5 2.5L15.5 4.5M14.5 1.5L9 7V9H11L16.5 3.5L14.5 1.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M15 10V14C15 14.6 14.6 15 14 15H4C3.4 15 3 14.6 3 14V4C3 3.4 3.4 3 4 3H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Pencil size={18} strokeWidth={1.5} aria-hidden />
           </button>
         </div>
 
@@ -169,7 +159,7 @@ export function HabitDetailPage() {
         {/* Heatmap: a tap opens the day sheet (explicit choice) instead of cycling the value */}
         <div className="bg-tg-section rounded-2xl p-4 mb-5">
           {hours ? (
-            <Heatmap entries={levelEntries(habit)} color={habit.color} onSelect={setHoursDate} />
+            <Heatmap entries={heatEntries} color={habit.color} onSelect={setHoursDate} levelLabels={HOURS_LEVEL_LABELS} />
           ) : (
             <Heatmap entries={habit.entries} color={habit.color} binary={habit.binary} onSelect={setDayDate} />
           )}

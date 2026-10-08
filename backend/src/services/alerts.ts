@@ -76,7 +76,10 @@ export async function sendDailyReport(): Promise<void> {
       prisma.habit.count({ where: { createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
       prisma.habitEntry.count({ where: { createdAt: { gte: yesterday.from, lt: yesterday.to } } }),
       // Diary days are stored as UTC midnight of the local date, so this is "yesterday" in Moscow too.
-      developerNutritionLine(yesterday.from).catch(() => null),
+      developerNutritionLine(yesterday.from).catch((err) => {
+        console.error('[alerts] Nutrition line failed:', err);
+        return null;
+      }),
     ]);
 
   const date = yesterday.from.toISOString().split('T')[0];
@@ -208,9 +211,13 @@ export function startAlerts(): void {
     console.warn('[alerts] DEVELOPER_CHAT_ID not set — daily reports disabled');
     return;
   }
-  // Ежедневный отчёт в 09:00 UTC
-  cron.schedule('0 9 * * *', () => {
-    sendDailyReport().catch((err) => console.error('[alerts] Report error:', err));
-  });
-  console.log('[alerts] Daily report scheduled at 09:00 UTC');
+  // Ежедневный отчёт в 09:00 МСК (06:00 UTC). The VPS clock is Europe/Moscow; the timezone is pinned so it doesn't depend on it.
+  cron.schedule(
+    '0 6 * * *',
+    () => {
+      sendDailyReport().catch((err) => console.error('[alerts] Report error:', err));
+    },
+    { timezone: 'UTC' },
+  );
+  console.log('[alerts] Daily report scheduled at 06:00 UTC (09:00 MSK)');
 }

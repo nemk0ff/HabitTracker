@@ -12,16 +12,18 @@ export function FavoriteStar({ active, onToggle, className = '' }: Props) {
   return (
     <button
       type="button"
-      aria-label={active ? 'Убрать из любимых' : 'В любимые'}
+      aria-label="В любимые"
+      aria-pressed={active}
       onClick={(e) => {
         e.stopPropagation();
         haptic('select');
         onToggle();
       }}
-      className={`shrink-0 w-8 h-8 flex items-center justify-center text-lg leading-none active:scale-90 transition-transform ${className}`}
+      // 32px visual, 44px touch target via .hit-44 (index.css).
+      className={`hit-44 shrink-0 w-8 h-8 flex items-center justify-center text-lg leading-none active:scale-90 transition-transform ${className}`}
       style={{ color: active ? NUTRITION_COLOR : 'var(--tg-theme-hint-color)' }}
     >
-      {active ? '★' : '☆'}
+      <span aria-hidden="true">{active ? '★' : '☆'}</span>
     </button>
   );
 }

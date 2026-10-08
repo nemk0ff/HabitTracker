@@ -14,6 +14,11 @@ model User {
   lastName      String?
   username      String?
   createdAt     DateTime         @default(now())
+  /// Minutes, JS getTimezoneOffset() convention (UTC − local): Moscow = −180. Sent by the client on auth.
+  tzOffset      Int?
+  /// Local 'HH:MM' of the evening check-in.
+  checkinTime   String?
+  onboardedAt   DateTime?
   habits        Habit[]
   events        AnalyticsEvent[]
   foods         Food[]

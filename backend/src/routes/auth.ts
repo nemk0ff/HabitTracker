@@ -4,14 +4,15 @@ import { validateInitData } from '../utils/telegram.js';
 import { signToken } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
 import { hasAgentLogAccess, hasNutritionAccess } from '../utils/features.js';
+import { isValidTzOffset } from '../utils/safe.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const IS_DEV = process.env.NODE_ENV !== 'production';
 const DEVELOPER_CHAT_ID = process.env.DEVELOPER_CHAT_ID || '';
 
 export async function authRoutes(app: FastifyInstance) {
-  app.post<{ Body: { initData: string } }>('/auth', async (request, reply) => {
-    const { initData } = request.body;
+  app.post<{ Body: { initData: string; tzOffset?: number } }>('/auth', async (request, reply) => {
+    const { initData, tzOffset } = request.body ?? ({} as { initData: string; tzOffset?: number });
     if (!initData) {
       return reply.status(400).send({ error: 'initData is required' });
     }
@@ -32,20 +33,30 @@ export async function authRoutes(app: FastifyInstance) {
       where: { telegramId: BigInt(telegramUser.id) },
     });
 
-    const user = await prisma.user.upsert({
+    // Optional, ignored when malformed — auth must never fail because of it.
+    const tz = isValidTzOffset(tzOffset) ? { tzOffset } : {};
+
+    let user = await prisma.user.upsert({
       where: { telegramId: BigInt(telegramUser.id) },
       update: {
         firstName: telegramUser.first_name,
         lastName: telegramUser.last_name ?? null,
         username: telegramUser.username ?? null,
+        ...tz,
       },
       create: {
         telegramId: BigInt(telegramUser.id),
         firstName: telegramUser.first_name,
         lastName: telegramUser.last_name ?? null,
         username: telegramUser.username ?? null,
+        ...tz,
       },
     });
+
+    // Users who set up habits before onboarding existed count as onboarded.
+    if (!user.onboardedAt && (await prisma.habit.count({ where: { userId: user.id } })) > 0) {
+      user = await prisma.user.update({ where: { id: user.id }, data: { onboardedAt: new Date() } });
+    }
 
     track({
       userId: user.id,
@@ -67,6 +78,8 @@ export async function authRoutes(app: FastifyInstance) {
         lastName: user.lastName,
         username: user.username,
         isAdmin: DEVELOPER_CHAT_ID !== '' && telegramUser.id.toString() === DEVELOPER_CHAT_ID,
+        onboarded: user.onboardedAt !== null,
+        checkinTime: user.checkinTime,
         features: {
           nutrition: hasNutritionAccess(telegramUser.id),
           agentLog: hasAgentLogAccess(telegramUser.id),

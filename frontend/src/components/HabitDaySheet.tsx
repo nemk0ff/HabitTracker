@@ -2,6 +2,7 @@ import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { BottomSheet } from './nutrition/BottomSheet';
 import { INTENSITY_LABELS } from '../utils/habitActions';
+import { readableOn } from '../utils/colors';
 import type { Habit } from '../types';
 
 interface Props {
@@ -28,11 +29,11 @@ export function HabitDaySheet({ habit, date, onClose, onSave }: Props) {
   };
 
   return (
-    <BottomSheet open={date !== null} onClose={onClose}>
+    <BottomSheet open={date !== null} onClose={onClose} label={`«${habit.name}»: отметка за день`}>
       {date && (
         <>
           <h2 className="text-lg font-semibold text-tg-text">{format(parseISO(date), 'd MMMM, EEEE', { locale: ru })}</h2>
-          <p className="text-sm text-tg-hint mb-4">{habit.name}</p>
+          <p className="text-sm text-hint-strong mb-4">{habit.name}</p>
           <div className="flex gap-2">
             {options.map((o) => {
               const active = current === o.value || (habit.binary && current > 0);
@@ -44,7 +45,7 @@ export function HabitDaySheet({ habit, date, onClose, onSave }: Props) {
                   className="flex-1 min-h-[52px] rounded-xl text-base font-semibold transition-colors"
                   style={
                     active
-                      ? { backgroundColor: habit.color, color: '#fff' }
+                      ? { backgroundColor: habit.color, color: readableOn(habit.color) }
                       : { backgroundColor: 'var(--tg-theme-section-bg-color)', color: 'var(--tg-theme-text-color)' }
                   }
                 >

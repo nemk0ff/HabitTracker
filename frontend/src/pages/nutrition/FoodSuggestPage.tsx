@@ -19,7 +19,7 @@ export function FoodSuggestPage() {
   const [picked, setPicked] = useState<Suggestion | null>(null);
   const [adding, setAdding] = useState(false);
 
-  useBackButton(() => navigate('food-day'));
+  useBackButton(useNavStore((s) => s.back));
   useMainButton(null, () => {});
 
   useEffect(() => {

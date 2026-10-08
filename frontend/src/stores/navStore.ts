@@ -12,20 +12,43 @@ export interface NavParams {
   foodId?: number | null;
 }
 
+const MAX_HISTORY = 20;
+
 interface NavState extends Required<NavParams> {
   screen: Screen;
-  /** Params not passed keep their previous values. */
+  /** Screens visited before the current one (oldest first). */
+  history: Screen[];
+  /**
+   * Params not passed keep their previous values. Navigating to the current screen only updates
+   * params; navigating to a screen already in the history unwinds back to it (no loops).
+   */
   navigate: (screen: Screen, params?: NavParams) => void;
+  /** Returns to the previous screen ('hub' when there is none). */
+  back: () => void;
 }
 
 export const useNavStore = create<NavState>((set) => ({
   screen: 'hub',
+  history: [],
   selectedHabitId: null,
   foodDate: toDateString(new Date()),
   foodMeal: 'breakfast',
   foodId: null,
 
   navigate: (screen, params = {}) => {
-    set({ screen, ...params });
+    set((s) => {
+      if (screen === s.screen) return { ...params };
+      const i = s.history.lastIndexOf(screen);
+      const history = i >= 0 ? s.history.slice(0, i) : [...s.history, s.screen].slice(-MAX_HISTORY);
+      return { screen, history, ...params };
+    });
+  },
+
+  back: () => {
+    set((s) => {
+      const history = s.history.slice(0, -1);
+      const prev = s.history[s.history.length - 1] ?? 'hub';
+      return { screen: prev === s.screen ? 'hub' : prev, history };
+    });
   },
 }));

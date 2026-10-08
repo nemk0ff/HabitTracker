@@ -6,6 +6,7 @@ import cron from 'node-cron';
 import { prisma } from '../../db.js';
 import { bot } from '../bot.js';
 import { hasNutritionAccess } from '../../utils/features.js';
+import { forEachSafe } from '../../utils/safe.js';
 import { CLAUDE_MODEL, claudeAvailable, getClaude, responseText } from '../claude.js';
 import { computePlan } from './model.js';
 
@@ -124,15 +125,24 @@ export async function weeklySummaryText(userId: number, date = todayMsk()): Prom
 
 /** Sundays 15:00 UTC (18:00 MSK) — to every nutrition user with a goal. */
 export function startWeeklySummaryCron(): void {
-  cron.schedule('0 15 * * 0', async () => {
-    const goals = await prisma.nutritionGoal.findMany({ include: { user: true } });
-    for (const g of goals) {
-      if (!hasNutritionAccess(g.user.telegramId)) continue;
+  cron.schedule(
+    '0 15 * * 0',
+    async () => {
+      // An unhandled rejection here would crash the process on Node 20.
       try {
-        await bot.api.sendMessage(String(g.user.telegramId), await weeklySummaryText(g.userId));
+        const goals = await prisma.nutritionGoal.findMany({ include: { user: true } });
+        await forEachSafe(
+          goals.filter((g) => hasNutritionAccess(g.user.telegramId)),
+          '[weekly] summary',
+          (g) => `user ${g.userId}`,
+          async (g) => {
+            await bot.api.sendMessage(String(g.user.telegramId), await weeklySummaryText(g.userId));
+          },
+        );
       } catch (e) {
-        console.error('[weekly] send failed:', e);
+        console.error('[weekly] cron failed:', e);
       }
-    }
-  });
+    },
+    { timezone: 'UTC' },
+  );
 }

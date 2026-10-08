@@ -36,6 +36,14 @@ function withEntries(day: FoodDay, entries: FoodLogEntry[]): FoodDay {
   return { ...day, entries, totals: sumMacros(entries) };
 }
 
+/**
+ * Per-date mutation counter, bumped when a mutation of that date starts and again when it settles.
+ * A day GET that overlapped a mutation may carry the pre-mutation state and would overwrite the
+ * optimistic change, so its result is dropped (unless the day isn't cached at all yet).
+ */
+const dayVersion = new Map<string, number>();
+const bumpDay = (date: string) => dayVersion.set(date, (dayVersion.get(date) ?? 0) + 1);
+
 export const useNutritionStore = create<NutritionState>((set, get) => {
   /** Apply a change to a cached day (no-op if that day isn't loaded). */
   const patchDay = (date: string, fn: (entries: FoodLogEntry[]) => FoodLogEntry[]) => {
@@ -56,8 +64,11 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
     error: null,
 
     loadDay: async (date) => {
+      const version = dayVersion.get(date) ?? 0;
       try {
         const day = await api.fetchDay(date);
+        // A mutation of this day overlapped the request: keep the (optimistic) cached day.
+        if ((dayVersion.get(date) ?? 0) !== version && get().days[date]) return;
         set((s) => ({ days: { ...s.days, [date]: day }, goal: day.goal, goalLoaded: true, error: null }));
       } catch (e: any) {
         set({ error: e.message });
@@ -127,13 +138,17 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
     },
 
     addEntry: async (input) => {
+      bumpDay(input.date);
       try {
         const entry = await api.addLogEntry(input);
-        patchDay(entry.date, (entries) => [...entries, entry]);
+        // Dedupe: a reload that overlapped the POST may already contain the entry.
+        patchDay(entry.date, (entries) => [...entries.filter((e) => e.id !== entry.id), entry]);
         return entry;
       } catch (e: any) {
         set({ error: e.message });
         return null;
+      } finally {
+        bumpDay(input.date);
       }
     },
 
@@ -144,43 +159,56 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
     },
 
     updateEntry: async (entry, data) => {
+      bumpDay(entry.date);
       try {
         const updated = await api.updateLogEntry(entry.id, data);
         patchDay(entry.date, (entries) => entries.map((e) => (e.id === entry.id ? updated : e)));
       } catch (e: any) {
         set({ error: e.message });
+      } finally {
+        bumpDay(entry.date);
       }
     },
 
     removeEntry: async (entry) => {
       // Optimistic, like habitsStore.toggleEntry; reload the day on failure.
+      bumpDay(entry.date);
       patchDay(entry.date, (entries) => entries.filter((e) => e.id !== entry.id));
       try {
         await api.deleteLogEntry(entry.id);
+        bumpDay(entry.date);
       } catch (e: any) {
+        bumpDay(entry.date);
         set({ error: e.message });
         get().loadDay(entry.date);
       }
     },
 
     setDayComplete: async (date, complete) => {
+      bumpDay(date);
       set((s) => (s.days[date] ? { days: { ...s.days, [date]: { ...s.days[date]!, complete } } } : s));
       try {
         await api.setDayComplete(date, complete);
+        bumpDay(date);
       } catch (e: any) {
+        bumpDay(date);
         set({ error: e.message });
         get().loadDay(date);
       }
     },
 
     copyDay: async (fromDate, toDate, meal) => {
+      bumpDay(toDate);
       try {
         const created = await api.copyDay(fromDate, toDate, meal);
-        patchDay(toDate, (entries) => [...entries, ...created]);
+        const ids = new Set(created.map((c) => c.id));
+        patchDay(toDate, (entries) => [...entries.filter((e) => !ids.has(e.id)), ...created]);
         return created.length;
       } catch (e: any) {
         set({ error: e.message });
         return 0;
+      } finally {
+        bumpDay(toDate);
       }
     },
 

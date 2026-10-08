@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
+import { Check } from 'lucide-react';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { ColorPicker } from '../components/ColorPicker';
 import { EmojiPicker } from '../components/EmojiPicker';
 import { HABIT_COLORS } from '../utils/colors';
+import { HABIT_TEMPLATES, type HabitTemplate } from '../utils/habitTemplates';
+import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 
 export function HabitFormPage() {
   const { habits, addHabit, editHabit } = useHabitsStore();
@@ -15,68 +18,47 @@ export function HabitFormPage() {
   const [name, setName] = useState(existing?.name || '');
   const [color, setColor] = useState(existing?.color || HABIT_COLORS[0]!);
   const [icon, setIcon] = useState<string | null>(existing?.icon || null);
-  const [binary, setBinary] = useState(existing?.binary ?? false);
+  const [binary, setBinary] = useState(existing?.binary ?? true); // new habits default to the simple check
   // Hours habits store minutes; the kind is chosen on creation only (entries aren't converted).
   const [hours, setHours] = useState(existing?.measure === 'hours');
   const [weeklyTarget, setWeeklyTarget] = useState<number | null>(existing?.weeklyTarget ?? null);
   const [saving, setSaving] = useState(false);
+  const [templateKey, setTemplateKey] = useState<string | null>(null);
 
-  useEffect(() => {
-    const webapp = window.Telegram?.WebApp;
-    if (!webapp) return;
-
-    webapp.BackButton?.show?.();
-    const backHandler = () => navigate(isEdit ? 'habit' : 'home');
-    webapp.BackButton?.onClick?.(backHandler);
-
-    webapp.MainButton?.setParams?.({
-      text: isEdit ? 'Сохранить' : 'Создать',
-      is_visible: true,
-    });
-
-    const mainHandler = async () => {
-      if (!name.trim() || saving) return;
-      setSaving(true);
-      webapp.MainButton?.showProgress?.(false);
-
-      try {
-        if (isEdit && selectedHabitId) {
-          await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary, weeklyTarget: hours ? null : weeklyTarget });
-          navigate('habit');
-        } else {
-          await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null, weeklyTarget: hours ? null : weeklyTarget });
-          navigate('home');
-        }
-        webapp.HapticFeedback?.notificationOccurred('success');
-      } finally {
-        webapp.MainButton?.hideProgress?.();
-        setSaving(false);
-      }
-    };
-    webapp.MainButton?.onClick?.(mainHandler);
-
-    return () => {
-      webapp.BackButton?.offClick?.(backHandler);
-      webapp.MainButton?.offClick?.(mainHandler);
-      webapp.MainButton?.hide?.();
-    };
-  }, [name, color, icon, binary, hours, weeklyTarget, isEdit, selectedHabitId, saving, navigate, addHabit, editHabit]);
-
-  const handleSubmit = async () => {
+  const save = async () => {
     if (!name.trim() || saving) return;
     setSaving(true);
     try {
-      if (isEdit && selectedHabitId) {
-        await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary, weeklyTarget: hours ? null : weeklyTarget });
-        navigate('habit');
-      } else {
-        await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null, weeklyTarget: hours ? null : weeklyTarget });
-        navigate('home');
+      const ok =
+        isEdit && selectedHabitId
+          ? await editHabit(selectedHabitId, { name: name.trim(), color, icon: icon || undefined, binary, weeklyTarget: hours ? null : weeklyTarget })
+          : await addHabit({ name: name.trim(), color, icon: icon || undefined, binary: hours ? false : binary, measure: hours ? 'hours' : null, weeklyTarget: hours ? null : weeklyTarget });
+      // On failure stay here so the input isn't lost; the Toaster shows the store error.
+      if (!ok) {
+        haptic('error');
+        return;
       }
+      haptic('success');
+      navigate(isEdit ? 'habit' : 'hub');
     } finally {
       setSaving(false);
     }
   };
+
+  const applyTemplate = (t: HabitTemplate) => {
+    haptic('select');
+    setTemplateKey(t.key);
+    setName(t.name);
+    setIcon(t.icon);
+    setColor(t.color);
+    setHours(t.measure === 'hours');
+    setBinary(t.binary);
+    setWeeklyTarget(t.weeklyTarget);
+  };
+
+  const back = useNavStore((s) => s.back);
+  useBackButton(back);
+  useMainButton(name.trim() ? (isEdit ? 'Сохранить' : 'Создать') : null, save, { progress: saving });
 
   return (
     <motion.div
@@ -91,6 +73,35 @@ export function HabitFormPage() {
           {isEdit ? 'Редактировать' : 'Новая привычка'}
         </h1>
 
+        {/* Ready-made templates: one tap fills everything below */}
+        {!isEdit && (
+          <div className="mb-6 -mx-4">
+            <p className="text-sm font-semibold text-tg-text mb-2 px-4">Готовые</p>
+            <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: 'none' }}>
+              {HABIT_TEMPLATES.map((t) => {
+                const on = templateKey === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => applyTemplate(t)}
+                    aria-pressed={on}
+                    className="shrink-0 min-h-[44px] px-3.5 rounded-full text-sm font-medium flex items-center gap-1.5 transition-colors"
+                    style={
+                      on
+                        ? { backgroundColor: t.color, color: '#fff' }
+                        : { backgroundColor: 'var(--tg-theme-section-bg-color)', color: 'var(--tg-theme-text-color)' }
+                    }
+                  >
+                    <span aria-hidden>{t.icon}</span>
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Name */}
         <div className="mb-6">
           <label className="block text-sm font-semibold text-tg-text mb-2">
@@ -99,10 +110,13 @@ export function HabitFormPage() {
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setTemplateKey(null);
+            }}
             placeholder="Например: Медитация"
             maxLength={30}
-            autoFocus
+            autoFocus={isEdit}
             className="w-full px-4 py-3 rounded-xl bg-tg-section text-tg-text placeholder:text-tg-hint text-base outline-none focus:ring-2 focus:ring-tg-button/30 transition-shadow"
           />
         </div>
@@ -156,30 +170,43 @@ export function HabitFormPage() {
           hours && <p className="text-xs text-tg-hint mb-6 px-1">Тип: часы — сохраняется при создании привычки</p>
         )}
 
-        {/* Binary mode */}
+        {/* How a day is marked: a plain check or a check with an effort level */}
         {!hours && (
-        <div className="mb-6">
-          <label className="block text-sm font-semibold text-tg-text mb-2">
-            Режим
-          </label>
-          <div className="bg-tg-section rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-tg-text">Только выполнено / нет</p>
-              <p className="text-xs text-tg-hint mt-0.5">Без оттенков интенсивности</p>
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-tg-text mb-2">Как отмечать</label>
+            <div className="flex flex-col gap-2" role="radiogroup" aria-label="Как отмечать">
+              {(
+                [
+                  [true, 'Просто галочка', 'Сделал или нет'],
+                  [false, 'С оценкой', 'Легко · средне · тяжело'],
+                ] as const
+              ).map(([value, title, hint]) => {
+                const on = binary === value;
+                return (
+                  <button
+                    key={title}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => setBinary(value)}
+                    className="w-full min-h-[56px] px-4 py-2.5 rounded-2xl bg-tg-section flex items-center justify-between gap-3 text-left transition-shadow"
+                    style={{ boxShadow: on ? `inset 0 0 0 2px ${color}` : undefined }}
+                  >
+                    <span>
+                      <span className="block text-sm font-medium text-tg-text">{title}</span>
+                      <span className="block text-xs text-tg-hint mt-0.5">{hint}</span>
+                    </span>
+                    <span
+                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white"
+                      style={on ? { backgroundColor: color } : { boxShadow: 'inset 0 0 0 1.5px var(--tg-theme-hint-color)' }}
+                    >
+                      {on && <Check size={14} aria-hidden />}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <button
-              type="button"
-              onClick={() => setBinary((b) => !b)}
-              className="relative shrink-0 w-12 h-7 rounded-full transition-colors duration-200"
-              style={{ backgroundColor: binary ? 'var(--tg-theme-button-color, #2196F3)' : 'rgba(120,120,128,0.32)' }}
-            >
-              <div
-                className="absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200"
-                style={{ transform: binary ? 'translateX(22px)' : 'translateX(4px)' }}
-              />
-            </button>
           </div>
-        </div>
         )}
 
         {/* Frequency goal: daily or N times a week (drives the weekly progress instead of a daily streak) */}
@@ -251,7 +278,7 @@ export function HabitFormPage() {
 
         {/* Fallback submit for non-Telegram env */}
         <button
-          onClick={handleSubmit}
+          onClick={save}
           disabled={!name.trim() || saving}
           className="w-full py-3 rounded-xl bg-tg-button text-tg-button-text font-medium text-sm disabled:opacity-50 active:opacity-80 transition-opacity"
         >

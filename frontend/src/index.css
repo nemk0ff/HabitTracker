@@ -5,7 +5,7 @@
 :root {
   --tg-theme-bg-color: #ffffff;
   --tg-theme-text-color: #000000;
-  --tg-theme-hint-color: #999999;
+  --tg-theme-hint-color: #6d6d71;
   --tg-theme-link-color: #2481cc;
   --tg-theme-button-color: #2481cc;
   --tg-theme-button-text-color: #ffffff;
@@ -21,6 +21,13 @@
   --fat: #b88a12;
   --carbs: #3d63a8;
   --over: #c2410c;
+
+  /* Accessibility tokens (cycle 1, a11y review). */
+  --empty-cell: rgba(0, 0, 0, 0.06);
+  /* Secondary text that must stay readable (≥4.5:1): hint pulled toward the text colour. */
+  --hint-strong: color-mix(in srgb, var(--tg-theme-text-color, #000000) 62%, var(--tg-theme-bg-color, #ffffff));
+  /* Switch "off" track: ≥3:1 against bg and secondary bg in both schemes. */
+  --switch-off: color-mix(in srgb, var(--tg-theme-text-color, #000000) 45%, transparent);
 }
 
 /* Telegram dark theme (set from WebApp.colorScheme in main.tsx). */
@@ -30,6 +37,29 @@
   --fat: #e2b43c;
   --carbs: #7e9fe0;
   --over: #f07a3e;
+
+  --empty-cell: rgba(255, 255, 255, 0.08);
+}
+
+.text-hint-strong {
+  color: var(--hint-strong);
+}
+
+/* Keyboard focus indicator for custom controls (wheel picker etc.). */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Expands a small control's touch target to ≥44px without changing its layout.
+   :where() keeps specificity 0 so a Tailwind `absolute` on the same element still wins. */
+:where(.hit-44) {
+  position: relative;
+}
+.hit-44::before {
+  content: '';
+  position: absolute;
+  inset: -6px; /* 32px control → 44px target */
 }
 
 /* The one expressive face: the day's big number. */

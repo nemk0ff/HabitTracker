@@ -5,6 +5,11 @@ import { bot } from './bot.js';
 const DAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const SNOOZE_INTERVAL_MS = 5 * 60 * 1000;
 const SNOOZE_WINDOW_MIN = 60;
+const DAY_MS = 86_400_000;
+/** Snooze state older than this is dropped without touching the message. */
+const STALE_SNOOZE_MS = DAY_MS;
+
+let isRunning = false;
 
 function utcNow() {
   const now = new Date();
@@ -19,6 +24,41 @@ function utcNow() {
 function timeToMinutes(hhmm: string): number {
   const parts = hhmm.split(':').map(Number);
   return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+}
+
+function utcMinutes(d: Date): number {
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+/** Minutes from the 'HH:MM' `time` to `nowMin`, wrapping past midnight. */
+function minutesSince(time: string, nowMin: number): number {
+  return (nowMin - timeToMinutes(time) + 1440) % 1440;
+}
+
+/**
+ * The user's calendar date at `at`, as the UTC-midnight Date that HabitEntry uses.
+ * `tzOffset` follows JS getTimezoneOffset() (UTC − local, Moscow = −180); without it
+ * we fall back to the UTC date (the old behaviour).
+ */
+function localDay(at: Date, tzOffset: number | null): number {
+  const shifted = new Date(at.getTime() - (tzOffset ?? 0) * 60_000);
+  return Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+}
+
+/** When the reminder that `sentAt` belongs to was scheduled (sends are ≤ SNOOZE_WINDOW_MIN after `time`). */
+function originalSendInstant(sentAt: Date, time: string): Date {
+  const elapsed = minutesSince(time, utcMinutes(sentAt));
+  return new Date(sentAt.getTime() - elapsed * 60_000);
+}
+
+function parseDays(raw: string, reminderId: number): string[] {
+  try {
+    const days = JSON.parse(raw);
+    return Array.isArray(days) ? days : [];
+  } catch {
+    console.error(`[scheduler] Reminder ${reminderId}: bad days JSON ${JSON.stringify(raw)} — skipped`);
+    return [];
+  }
 }
 
 async function trySend(chatId: string, text: string): Promise<number | null> {
@@ -48,7 +88,8 @@ async function checkAndSendReminders() {
       habit: {
         include: {
           user: true,
-          entries: { where: { date: { gte: todayStart } } },
+          // Local dates span UTC yesterday..tomorrow; snooze may look one more day back.
+          entries: { where: { date: { gte: new Date(todayStart.getTime() - 2 * DAY_MS) } }, select: { date: true } },
         },
       },
     },
@@ -56,41 +97,59 @@ async function checkAndSendReminders() {
 
   if (reminders.length === 0) return;
 
-  // --- 1. Initial notifications (exact time + correct day + not checked) ---
+  const hasEntry = (r: (typeof reminders)[number], dayMs: number) =>
+    r.habit.entries.some((e) => e.date.getTime() === dayMs);
+
+  // --- 1. Initial notifications (exact time + correct day + not checked on the user's local today) ---
   const dueReminders = reminders.filter((r) => {
-    const days: string[] = JSON.parse(r.days);
-    return days.includes(day) && r.time === hhmm && r.habit.entries.length === 0;
+    try {
+      return (
+        r.time === hhmm &&
+        parseDays(r.days, r.id).includes(day) &&
+        !hasEntry(r, localDay(timestamp, r.habit.user.tzOffset))
+      );
+    } catch (err) {
+      console.error(`[scheduler] Reminder ${r.id} check failed:`, err);
+      return false;
+    }
   });
 
   if (dueReminders.length > 0) {
     // Group by user for compact messages
-    const grouped = new Map<string, string[]>();
+    const grouped = new Map<string, typeof dueReminders>();
     for (const r of dueReminders) {
       const chatId = r.habit.user.telegramId.toString();
       if (!grouped.has(chatId)) grouped.set(chatId, []);
-      grouped.get(chatId)!.push(r.habit.icon ? `${r.habit.icon} ${r.habit.name}` : r.habit.name);
+      grouped.get(chatId)!.push(r);
     }
 
-    for (const [chatId, habits] of grouped) {
-      let text: string;
-      if (habits.length === 1) {
-        text = `⏰ Не забудь: <b>${habits[0]}</b>`;
-      } else {
-        const list = habits.map((n) => `  • ${n}`).join('\n');
-        text = `⏰ У тебя <b>${habits.length}</b> непрочеканных привычек:\n${list}`;
+    let sent = 0;
+    for (const [chatId, group] of grouped) {
+      try {
+        const habits = group.map((r) => (r.habit.icon ? `${r.habit.icon} ${r.habit.name}` : r.habit.name));
+        let text: string;
+        if (habits.length === 1) {
+          text = `⏰ Не забудь: <b>${habits[0]}</b>`;
+        } else {
+          const list = habits.map((n) => `  • ${n}`).join('\n');
+          text = `⏰ У тебя <b>${habits.length}</b> непрочеканных привычек:\n${list}`;
+        }
+        if ((await trySend(chatId, text)) === null) continue;
+
+        // Snooze tracking starts only once the user actually got the message.
+        for (const r of group) {
+          await prisma.reminder.update({
+            where: { id: r.id },
+            data: { lastSentAt: timestamp, lastMessageId: null },
+          });
+        }
+        sent += group.length;
+      } catch (err) {
+        console.error(`[scheduler] Initial reminder for ${chatId} failed:`, err);
       }
-      await trySend(chatId, text);
     }
 
-    // Mark lastSentAt for snooze tracking
-    for (const r of dueReminders) {
-      await prisma.reminder.update({
-        where: { id: r.id },
-        data: { lastSentAt: timestamp, lastMessageId: null },
-      });
-    }
-
-    console.log(`[scheduler] Sent initial reminders for ${dueReminders.length} habits at ${hhmm} UTC`);
+    console.log(`[scheduler] Sent initial reminders for ${sent}/${dueReminders.length} habits at ${hhmm} UTC`);
   }
 
   // --- 2. Snooze follow-ups ---
@@ -98,52 +157,80 @@ async function checkAndSendReminders() {
     if (!r.snooze || !r.lastSentAt) continue;
 
     const chatId = r.habit.user.telegramId.toString();
+    try {
+      // The day the reminder was about — not "today", which may have rolled over since.
+      const original = originalSendInstant(r.lastSentAt, r.time);
+      const reminderDay = localDay(original, r.habit.user.tzOffset);
 
-    // Habit was checked → clean up snooze state and delete old message
-    if (r.habit.entries.length > 0) {
+      // Habit was checked → clean up snooze state and delete old message
+      if (hasEntry(r, reminderDay)) {
+        if (r.lastMessageId) {
+          await tryDelete(chatId, r.lastMessageId);
+        }
+        await prisma.reminder.update({
+          where: { id: r.id },
+          data: { lastMessageId: null, lastSentAt: null },
+        });
+        continue;
+      }
+
+      if (timestamp.getTime() - original.getTime() > STALE_SNOOZE_MS) {
+        await prisma.reminder.update({
+          where: { id: r.id },
+          data: { lastMessageId: null, lastSentAt: null },
+        });
+        continue;
+      }
+
+      // Check snooze window (max 1 hour after scheduled time)
+      const elapsed = minutesSince(r.time, timeToMinutes(hhmm));
+      if (elapsed === 0 || elapsed > SNOOZE_WINDOW_MIN) continue;
+
+      // Check 5-minute interval since last send
+      const msSinceLast = timestamp.getTime() - r.lastSentAt.getTime();
+      if (msSinceLast < SNOOZE_INTERVAL_MS) continue;
+
+      // Delete old message, send new one
       if (r.lastMessageId) {
         await tryDelete(chatId, r.lastMessageId);
       }
+
+      const habitName = r.habit.icon ? `${r.habit.icon} ${r.habit.name}` : r.habit.name;
+      const text = `🔔 Напоминание: <b>${habitName}</b>\n<i>Повтор каждые 5 мин</i>`;
+      const msgId = await trySend(chatId, text);
+
       await prisma.reminder.update({
         where: { id: r.id },
-        data: { lastMessageId: null, lastSentAt: null },
+        // On failure keep lastSentAt so the next tick retries; the old message is gone either way.
+        data: msgId !== null ? { lastSentAt: timestamp, lastMessageId: msgId } : { lastMessageId: null },
       });
-      continue;
+
+      if (msgId !== null) console.log(`[scheduler] Snooze: "${r.habit.name}" → ${chatId}`);
+    } catch (err) {
+      console.error(`[scheduler] Snooze for reminder ${r.id} (${chatId}) failed:`, err);
     }
-
-    // Check snooze window (max 1 hour after scheduled time)
-    const nowMin = timeToMinutes(hhmm);
-    const scheduledMin = timeToMinutes(r.time);
-    const elapsed = ((nowMin - scheduledMin) + 1440) % 1440;
-    if (elapsed === 0 || elapsed > SNOOZE_WINDOW_MIN) continue;
-
-    // Check 5-minute interval since last send
-    const msSinceLast = timestamp.getTime() - r.lastSentAt.getTime();
-    if (msSinceLast < SNOOZE_INTERVAL_MS) continue;
-
-    // Delete old message, send new one
-    if (r.lastMessageId) {
-      await tryDelete(chatId, r.lastMessageId);
-    }
-
-    const habitName = r.habit.icon ? `${r.habit.icon} ${r.habit.name}` : r.habit.name;
-    const text = `🔔 Напоминание: <b>${habitName}</b>\n<i>Повтор каждые 5 мин</i>`;
-    const msgId = await trySend(chatId, text);
-
-    await prisma.reminder.update({
-      where: { id: r.id },
-      data: { lastSentAt: timestamp, lastMessageId: msgId },
-    });
-
-    console.log(`[scheduler] Snooze: "${r.habit.name}" → ${chatId}`);
   }
 }
 
 export function startScheduler() {
-  cron.schedule('* * * * *', () => {
-    checkAndSendReminders().catch((err) => {
-      console.error('[scheduler] Error:', err);
-    });
-  });
+  cron.schedule(
+    '* * * * *',
+    async () => {
+      // A slow tick (Telegram/DB latency) must not overlap the next one and double-send.
+      if (isRunning) {
+        console.warn('[scheduler] Previous run still in progress — tick skipped');
+        return;
+      }
+      isRunning = true;
+      try {
+        await checkAndSendReminders();
+      } catch (err) {
+        console.error('[scheduler] Error:', err);
+      } finally {
+        isRunning = false;
+      }
+    },
+    { timezone: 'UTC' },
+  );
   console.log('[scheduler] Reminder scheduler started (runs every minute)');
 }
