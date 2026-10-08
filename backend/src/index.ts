@@ -13,6 +13,7 @@ import { nutritionRoutes } from './routes/nutrition.js';
 import { meRoutes } from './routes/me.js';
 import { startScheduler } from './services/scheduler.js';
 import { bot, startBot } from './services/bot.js';
+import { initSharedCatalog } from './services/nutrition/foodSearch.js';
 import { startAlerts } from './services/alerts.js';
 import { startSessionWarningCron } from './services/claudeSessions.js';
 import { startWeeklySummaryCron } from './services/nutrition/weeklySummary.js';
@@ -61,6 +62,7 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 try {
+  await initSharedCatalog();
   await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`Server running on http://localhost:${PORT}`);
   startScheduler();

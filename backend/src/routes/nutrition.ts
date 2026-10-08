@@ -137,7 +137,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
     const byId = new Map(foods.map((f) => [f.id, f]));
     return top
       .filter(([id]) => byId.has(id))
-      .map(([id, s]) => ({ food: serializeFood(byId.get(id)!, favs), grams: s.grams, count: s.count }));
+      .map(([id, s]) => ({ food: serializeFood(byId.get(id)!, favs, userId), grams: s.grams, count: s.count }));
   });
 
   app.get('/nutrition/foods/mine', async (request) => {
@@ -146,7 +146,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
       prisma.food.findMany({ where: { ownerId: userId }, orderBy: { name: 'asc' } }),
       favoriteIds(userId),
     ]);
-    return foods.map((f) => serializeFood(f, favs));
+    return foods.map((f) => serializeFood(f, favs, userId));
   });
 
   app.post<{ Body: FoodBody }>('/nutrition/foods', async (request, reply) => {
@@ -173,7 +173,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
       },
     });
     track({ userId, event: 'food_custom_created', category: 'miniapp', label: name });
-    return serializeFood(food, await favoriteIds(userId));
+    return serializeFood(food, await favoriteIds(userId), userId);
   });
 
   app.patch<{ Params: { id: string }; Body: FoodBody }>('/nutrition/foods/:id', async (request, reply) => {
@@ -204,7 +204,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
         }),
       },
     });
-    return serializeFood(food, await favoriteIds(userId));
+    return serializeFood(food, await favoriteIds(userId), userId);
   });
 
   // ─── Favorites ("Что доесть") ──────────────────────────────────────────────
@@ -217,7 +217,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
       orderBy: { createdAt: 'asc' },
     });
     const favs = new Set(rows.map((r) => r.foodId));
-    return rows.map((r) => serializeFood(r.food, favs));
+    return rows.map((r) => serializeFood(r.food, favs, userId));
   });
 
   app.put<{ Params: { foodId: string } }>('/nutrition/favorites/:foodId', async (request, reply) => {

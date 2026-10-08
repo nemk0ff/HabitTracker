@@ -29,7 +29,27 @@ export async function favoriteIds(userId: number): Promise<Set<number>> {
   return new Set(rows.map((r) => r.foodId));
 }
 
-export function serializeFood(f: Food, favIds?: Set<number>) {
+/**
+ * The developer's own products (Лавка / Пятёрочка imports, restaurant items, agent finds)
+ * are a shared catalog: every user can find, log and star them, but only the developer
+ * edits them. Resolved once at startup — see initSharedCatalog().
+ */
+let sharedOwnerId: number | null = null;
+
+export async function initSharedCatalog(): Promise<void> {
+  const devTelegramId = process.env.DEVELOPER_CHAT_ID;
+  if (!devTelegramId) return;
+  try {
+    const dev = await prisma.user.findUnique({ where: { telegramId: BigInt(devTelegramId) }, select: { id: true } });
+    sharedOwnerId = dev?.id ?? null;
+    console.log(`[foods] shared catalog owner: ${sharedOwnerId ?? 'none'}`);
+  } catch (e) {
+    console.error('[foods] could not resolve the shared catalog owner:', e);
+  }
+}
+
+/** `own` is relative to the viewer: the developer's shared products aren't «Мой» for others. */
+export function serializeFood(f: Food, favIds: Set<number> | undefined, viewerId: number) {
   return {
     id: f.id,
     name: f.name,
@@ -41,14 +61,15 @@ export function serializeFood(f: Food, favIds?: Set<number>) {
     fat: f.fat,
     carbs: f.carbs,
     servings: parseServings(f.servings),
-    own: f.ownerId !== null,
+    own: f.ownerId === viewerId,
     favorite: favIds?.has(f.id) ?? false,
   };
 }
 
-/** Foods visible to a user: shared catalog (ownerId null) + their own. */
+/** Foods visible to a user: base catalog (ownerId null) + their own + the developer's shared products. */
 export function visibleTo(userId: number) {
-  return { OR: [{ ownerId: null }, { ownerId: userId }] };
+  const owners = sharedOwnerId !== null && sharedOwnerId !== userId ? [userId, sharedOwnerId] : [userId];
+  return { OR: [{ ownerId: null }, { ownerId: { in: owners } }] };
 }
 
 /** True when `stem` starts a word in `text` ("кол" starts "кола", not "шоколад"). */
@@ -192,11 +213,11 @@ export async function searchFoods(userId: number, rawQuery: string) {
   if (q.length < 2) return [];
 
   const [local, favs] = await Promise.all([searchLocal(userId, q), favoriteIds(userId)]);
-  if (local.length >= ONLINE_THRESHOLD) return local.map((f) => serializeFood(f, favs));
+  if (local.length >= ONLINE_THRESHOLD) return local.map((f) => serializeFood(f, favs, userId));
 
   const online = await searchOpenFoodFacts(rawQuery.trim());
   const seen = new Set(local.map((f) => f.id));
-  return [...local, ...online.filter((f) => !seen.has(f.id))].map((f) => serializeFood(f, favs));
+  return [...local, ...online.filter((f) => !seen.has(f.id))].map((f) => serializeFood(f, favs, userId));
 }
 
 /** Recently eaten foods of a user (most recent first), for the empty search state. */
@@ -213,5 +234,5 @@ export async function recentFoods(userId: number) {
   return ids
     .map((id) => byId.get(id))
     .filter((f): f is Food => !!f)
-    .map((f) => serializeFood(f, favs));
+    .map((f) => serializeFood(f, favs, userId));
 }
