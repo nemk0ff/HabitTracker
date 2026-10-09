@@ -10,6 +10,7 @@ import { useNavStore } from '../stores/navStore';
 import { useNutritionStore } from '../stores/nutritionStore';
 import { toast } from '../stores/toastStore';
 import { CheckinBanner } from '../components/CheckinBanner';
+import { useCantMessage, WriteAccessWarning } from '../components/WriteAccessWarning';
 import { EmptyHabits } from '../components/EmptyHabits';
 import { TodaySection } from '../components/TodaySection';
 import { HabitActionSheet } from '../components/HabitActionSheet';
@@ -62,7 +63,8 @@ export function TodayPage() {
   const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
   const [bannerHidden, setBannerHidden] = useState(isCheckinBannerDismissed);
   const active = useMemo(() => sortHabits(habits), [habits]);
-  const showBanner = active.length > 0 && !checkinTime && !bannerHidden;
+  const cantMessage = useCantMessage();
+  const showBanner = active.length > 0 && !checkinTime && !bannerHidden && !cantMessage;
 
   const markedToday = active.filter((h) => isMarkedOn(h, today)).length;
   // Skipped habits (ill / vacation) drop out of today's «N из M».
@@ -118,6 +120,20 @@ export function TodayPage() {
   const target = plan?.todayKcal ?? day?.goal?.kcal ?? null;
   const eaten = day?.totals.kcal ?? 0;
   const left = target !== null ? target - eaten : null;
+  // No goal and nothing eaten today → not a calorie counter (yet): a compact invite below the
+  // habits instead of the big block. Until day/plan load, keep the old layout (no flash for loggers).
+  const [nutritionInviteHidden, setNutritionInviteHidden] = useState(isNutritionInviteDismissed);
+  const notCounting =
+    !!day &&
+    plan !== undefined &&
+    !day.goal &&
+    !plan?.todayKcal &&
+    day.entries.length === 0 &&
+    // Weighing in counts as using the tracker — keep the full block (with the weight row).
+    plan?.weightKg == null &&
+    plan?.lastWeightKg == null;
+  const showNutritionBlock = nutrition && !notCounting;
+  const showNutritionInvite = nutrition && notCounting && !nutritionInviteHidden;
   const proteinTarget = plan?.proteinTarget ?? day?.goal?.protein ?? null;
   const proteinLeft = proteinTarget !== null ? Math.max(0, proteinTarget - (day?.totals.protein ?? 0)) : null;
 
@@ -209,6 +225,8 @@ export function TodayPage() {
           </section>
         )}
 
+        {cantMessage && <WriteAccessWarning className="mb-5" />}
+
         {showBanner && !showReturnBanner && (
           <CheckinBanner
             onAccept={async () => {
@@ -224,7 +242,7 @@ export function TodayPage() {
         )}
 
         {/* The day's main block: what's left to eat + weight */}
-        {nutrition && (
+        {showNutritionBlock && (
           <section
             className="rounded-3xl p-5 mb-6"
             style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 9%, transparent)' }}
@@ -336,6 +354,39 @@ export function TodayPage() {
             />
           ))
         )}
+
+        {showNutritionInvite && (
+          <section
+            className="relative rounded-2xl p-4 pr-12 mt-6"
+            style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 9%, transparent)' }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                dismissNutritionInvite();
+                setNutritionInviteHidden(true);
+                haptic('select');
+              }}
+              aria-label="Скрыть"
+              className="absolute top-1 right-1 w-11 h-11 flex items-center justify-center text-tg-hint active:opacity-60"
+            >
+              <X size={18} aria-hidden />
+            </button>
+            <p className="text-base font-medium text-tg-text flex items-start gap-1.5">
+              <Utensils size={18} className="shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} aria-hidden />
+              Считать калории?
+            </p>
+            <p className="text-sm text-tg-hint mt-0.5">Поставь цель — покажу, сколько осталось на день</p>
+            <button
+              type="button"
+              onClick={() => navigate('food-goal')}
+              className="mt-3 min-h-[44px] px-4 rounded-xl text-sm font-semibold text-white active:opacity-80"
+              style={{ backgroundColor: 'var(--accent)' }}
+            >
+              Поставить цель
+            </button>
+          </section>
+        )}
       </div>
 
       {hoursHabit && (
@@ -375,5 +426,23 @@ function dismissReturnBanner(today: string) {
     localStorage.setItem(RETURN_BANNER_KEY, today);
   } catch {
     /* private mode: the banner is hidden for this session only */
+  }
+}
+
+const NUTRITION_INVITE_KEY = 'nutritionInviteDismissed';
+
+function isNutritionInviteDismissed(): boolean {
+  try {
+    return localStorage.getItem(NUTRITION_INVITE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function dismissNutritionInvite() {
+  try {
+    localStorage.setItem(NUTRITION_INVITE_KEY, '1');
+  } catch {
+    /* private mode: hidden for this session only */
   }
 }

@@ -2,6 +2,7 @@ import { saveMe } from '../api/me';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
+import { ensureWriteAccess } from './writeAccess';
 
 export const CHECKIN_PRESETS = ['20:00', '21:00', '22:00', '23:00'] as const;
 
@@ -9,13 +10,18 @@ export const MORNING_CHECKIN_PRESETS = ['07:00', '08:00', '09:00'] as const;
 
 type CheckinField = 'checkinTime' | 'morningCheckinTime';
 
-/** Saves a check-in time (local HH:MM, null = off) and mirrors it into the auth store. */
+/**
+ * Saves a check-in time (local HH:MM, null = off) and mirrors it into the auth store; a set time
+ * then asks for Telegram write access (without it the bot can't send the check-in).
+ */
 async function saveTime(field: CheckinField, time: string | null, name: string): Promise<boolean> {
   try {
     await saveMe({ [field]: time });
     useAuthStore.getState().patchUser({ [field]: time });
     haptic('success');
     toast(time ? `Сохранено · ${name} в ${time}` : `Сохранено · ${name} выключена`);
+    // The time stays saved either way; if the bot can't write, Today/Settings show a warning.
+    if (time) void ensureWriteAccess();
     return true;
   } catch {
     haptic('error');

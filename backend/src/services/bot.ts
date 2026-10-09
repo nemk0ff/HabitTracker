@@ -46,6 +46,10 @@ function openTrackerOptions() {
 bot.command('start', async (ctx) => {
   const userId = await resolveUserId(ctx.from?.id);
   track({ userId, event: 'command_start', category: 'bot' });
+  // The user wrote to the bot, so it can write back (reopens a channel closed by an earlier 403).
+  if (userId !== null) {
+    await prisma.user.update({ where: { id: userId }, data: { canMessage: true } }).catch((e) => console.error('[bot] canMessage on /start:', e));
+  }
 
   const name = escapeHtml(ctx.from?.first_name ?? 'друг');
   const text =

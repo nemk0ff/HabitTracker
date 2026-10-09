@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
+import { useCantMessage, WriteAccessWarning } from '../components/WriteAccessWarning';
 import { CHECKIN_PRESETS, MORNING_CHECKIN_PRESETS, saveCheckinTime, saveMorningCheckinTime } from '../utils/checkin';
 
 /** User settings: the evening check-in and (with morning habits) the morning one. */
@@ -12,6 +13,7 @@ export function SettingsPage() {
   const back = useNavStore((s) => s.back);
   const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
   const morningTime = useAuthStore((s) => s.user?.morningCheckinTime ?? null);
+  const cantMessage = useCantMessage();
   const hasMorningHabits = useHabitsStore((s) => s.habits.some((h) => !h.archived && h.timeOfDay === 'morning'));
 
   useBackButton(back);
@@ -27,6 +29,8 @@ export function SettingsPage() {
     >
       <div className="p-4 pb-10">
         <h1 className="text-xl font-semibold text-tg-text mb-5">Настройки</h1>
+
+        {cantMessage && <WriteAccessWarning className="mb-6" />}
 
         <TimeSection
           title="Вечерняя сводка в боте"

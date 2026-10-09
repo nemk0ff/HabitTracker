@@ -20,6 +20,7 @@ import {
   localClock,
   sortCheckinHabits,
 } from '../src/services/checkin.js';
+import { sendToUser } from '../src/services/messaging.js';
 
 const telegramId = BigInt(9_000_000_000 + Math.floor(Math.random() * 1_000_000));
 const clock = localClock(new Date(), -180);
@@ -126,6 +127,13 @@ try {
   r = await handleCheckinCallback(telegramId, `ci:${yoga.id}:${today}:1`);
   console.log(`\ntap ⏸ Йога → ${r.answer}; entry =`, JSON.stringify(await entryOf(yoga.id)), '(expect value 1, skipped false)');
   if (r.message) show('evening after unskip (no Вода)', r.message);
+
+  // ── Closed channel: no API call, settings untouched ──
+  const closed = await prisma.user.update({ where: { id: user.id }, data: { canMessage: false } });
+  const skipped = await sendToUser(closed, 'test');
+  const after = await prisma.user.findUnique({ where: { id: user.id } });
+  console.log(`
+sendToUser with canMessage=false →`, skipped, `; checkinTime ${after?.checkinTime} (expect null and the check-in time kept)`);
 } finally {
   await new Promise((res) => setTimeout(res, 300)); // let fire-and-forget track() land
   await prisma.analyticsEvent.deleteMany({ where: { userId: user.id } });

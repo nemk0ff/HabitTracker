@@ -25,6 +25,9 @@ model User {
   /// Local 'YYYY-MM-DD' of the last morning check-in sent (or skipped).
   lastMorningCheckinDate String?
   onboardedAt   DateTime?
+  /// Can the bot message this user? null = unknown, true = allowed (initData allows_write_to_pm, /start, a
+  /// successful send), false = the last send got 403 (never pressed /start, or blocked the bot).
+  canMessage    Boolean?
   habits        Habit[]
   events        AnalyticsEvent[]
   foods         Food[]

@@ -15,3 +15,8 @@ export function saveMe(data: {
     body: JSON.stringify(data),
   });
 }
+
+/** After Telegram granted write access: the backend sends a confirmation and reports whether it got through. */
+export function requestWriteAccessApi(): Promise<{ canMessage: boolean }> {
+  return api<{ canMessage: boolean }>('/api/me/write-access', { method: 'POST' });
+}

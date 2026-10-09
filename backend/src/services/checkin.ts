@@ -12,9 +12,9 @@
  */
 import cron from 'node-cron';
 import { prisma } from '../db.js';
-import { bot } from './bot.js';
 import { track } from './analytics.js';
 import { forEachSafe } from '../utils/safe.js';
+import { sendToUser } from './messaging.js';
 import {
   addDays,
   countTarget,
@@ -273,7 +273,7 @@ async function sendDue(kind: CheckinKind, now: Date): Promise<void> {
       const last = morning ? user.lastMorningCheckinDate : user.lastCheckinDate;
       if (!at) return false;
       const late = toMinutes(clock.hhmm) - toMinutes(at);
-      return late >= 0 && late < SEND_WINDOW_MIN && last !== clock.date;
+      return late >= 0 && late < SEND_WINDOW_MIN && last !== clock.date && user.canMessage !== false;
     });
 
   await forEachSafe(due, `[checkin] send ${kind}`, ({ user }) => `user ${user.id}`, async ({ user, clock }) => {
@@ -292,6 +292,7 @@ async function sendDue(kind: CheckinKind, now: Date): Promise<void> {
         .map((e) => e.habitId),
     );
     // Claim the day first: a slow/failed send must never repeat on the next tick.
+    const previous = morning ? user.lastMorningCheckinDate : user.lastCheckinDate;
     await prisma.user.update({
       where: { id: user.id },
       data: morning ? { lastMorningCheckinDate: clock.date } : { lastCheckinDate: clock.date },
@@ -299,18 +300,16 @@ async function sendDue(kind: CheckinKind, now: Date): Promise<void> {
     if (habits.every((h) => resolvedToday.has(h.id))) return;
 
     const msg = buildCheckinMessage(user, habits, entries, clock.date, kind);
-    try {
-      await bot.api.sendMessage(String(user.telegramId), msg.text, {
-        reply_markup: { inline_keyboard: msg.keyboard as any },
+    // A 403 marks the channel closed (canMessage=false) but keeps the check-in time: the user chose it,
+    // the bot just can't reach them yet (e.g. opened the Mini App without /start).
+    const sent = await sendToUser(user, msg.text, { reply_markup: { inline_keyboard: msg.keyboard as any } }, { purpose: `checkin_${kind}` });
+    if (!sent) {
+      // Closed channel (403 / skipped): release the claim so a grant later today still gets it in the window.
+      await prisma.user.update({
+        where: { id: user.id },
+        data: morning ? { lastMorningCheckinDate: previous } : { lastCheckinDate: previous },
       });
-    } catch (e: any) {
-      // Blocked the bot: stop asking every evening (they can re-enable it in the Mini App settings).
-      if (e?.error_code === 403) {
-        await prisma.user.update({ where: { id: user.id }, data: { checkinTime: null, morningCheckinTime: null } });
-        track({ userId: user.id, event: 'checkin_disabled_blocked', category: 'bot' });
-        return;
-      }
-      throw e;
+      return;
     }
     track({ userId: user.id, event: morning ? 'morning_checkin_sent' : 'checkin_sent', category: 'bot', label: clock.date });
   });

@@ -48,6 +48,8 @@ export interface User {
   checkinTime?: string | null;
   /** Optional second check-in in the morning with morning habits only (local HH:MM). */
   morningCheckinTime?: string | null;
+  /** Whether the bot can message this user (Telegram write access). null = unknown. */
+  canMessage?: boolean | null;
 }
 
 export interface AdminUserGroup {

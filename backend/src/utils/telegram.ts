@@ -6,6 +6,8 @@ export interface TelegramUser {
   last_name?: string;
   username?: string;
   language_code?: string;
+  /** Sent (as true) only when the user allowed the bot to write to them. */
+  allows_write_to_pm?: boolean;
 }
 
 export function validateInitData(initData: string, botToken: string): TelegramUser | null {

@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../db.js';
 import { bot } from './bot.js';
+import { sendToUser, type Recipient } from './messaging.js';
 
 const DAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const SNOOZE_INTERVAL_MS = 5 * 60 * 1000;
@@ -70,12 +71,13 @@ function parseDays(raw: string, reminderId: number): string[] {
   }
 }
 
-async function trySend(chatId: string, text: string): Promise<number | null> {
+/** Message id, or null when not delivered (closed channel, 403 → canMessage=false, or any other error). */
+async function trySend(user: Recipient, text: string, purpose: string): Promise<number | null> {
   try {
-    const msg = await bot.api.sendMessage(chatId, text, { parse_mode: 'HTML' });
-    return msg.message_id;
+    const msg = await sendToUser(user, text, { parse_mode: 'HTML' }, { purpose });
+    return msg?.message_id ?? null;
   } catch (err) {
-    console.error(`[scheduler] Failed to send to ${chatId}:`, err);
+    console.error(`[scheduler] Failed to send to ${user.telegramId}:`, err);
     return null;
   }
 }
@@ -114,6 +116,7 @@ async function checkAndSendReminders() {
     try {
       return (
         r.time === hhmm &&
+        r.habit.user.canMessage !== false &&
         parseDays(r.days, r.id).includes(localWeekday(timestamp, r.habit.user.tzOffset)) &&
         !hasEntry(r, localDay(timestamp, r.habit.user.tzOffset))
       );
@@ -143,7 +146,7 @@ async function checkAndSendReminders() {
           const list = habits.map((n) => `  • ${n}`).join('\n');
           text = `⏰ У тебя <b>${habits.length}</b> непрочеканных привычек:\n${list}`;
         }
-        if ((await trySend(chatId, text)) === null) continue;
+        if ((await trySend(group[0]!.habit.user, text, 'reminder')) === null) continue;
 
         // Snooze tracking starts only once the user actually got the message.
         for (const r of group) {
@@ -163,7 +166,7 @@ async function checkAndSendReminders() {
 
   // --- 2. Snooze follow-ups ---
   for (const r of reminders) {
-    if (!r.snooze || !r.lastSentAt) continue;
+    if (!r.snooze || !r.lastSentAt || r.habit.user.canMessage === false) continue;
 
     const chatId = r.habit.user.telegramId.toString();
     try {
@@ -206,7 +209,7 @@ async function checkAndSendReminders() {
 
       const habitName = r.habit.icon ? `${r.habit.icon} ${r.habit.name}` : r.habit.name;
       const text = `🔔 Напоминание: <b>${habitName}</b>\n<i>Повтор каждые 5 мин</i>`;
-      const msgId = await trySend(chatId, text);
+      const msgId = await trySend(r.habit.user, text, 'reminder_snooze');
 
       await prisma.reminder.update({
         where: { id: r.id },

@@ -35,6 +35,11 @@ export async function authRoutes(app: FastifyInstance) {
 
     // Optional, ignored when malformed — auth must never fail because of it.
     const tz = isValidTzOffset(tzOffset) ? { tzOffset } : {};
+    // Only ever sent as true, so its absence says nothing — never downgrade canMessage from it. And it only
+    // upgrades an unknown channel: a known-closed one (403 — e.g. the bot was blocked) stays closed until
+    // /start or a successful send proves otherwise.
+    const writeAccess =
+      telegramUser.allows_write_to_pm === true && (existing?.canMessage ?? null) === null ? { canMessage: true } : {};
 
     let user = await prisma.user.upsert({
       where: { telegramId: BigInt(telegramUser.id) },
@@ -43,6 +48,7 @@ export async function authRoutes(app: FastifyInstance) {
         lastName: telegramUser.last_name ?? null,
         username: telegramUser.username ?? null,
         ...tz,
+        ...writeAccess,
       },
       create: {
         telegramId: BigInt(telegramUser.id),
@@ -50,6 +56,7 @@ export async function authRoutes(app: FastifyInstance) {
         lastName: telegramUser.last_name ?? null,
         username: telegramUser.username ?? null,
         ...tz,
+        ...writeAccess,
       },
     });
 
@@ -81,6 +88,7 @@ export async function authRoutes(app: FastifyInstance) {
         onboarded: user.onboardedAt !== null,
         checkinTime: user.checkinTime,
         morningCheckinTime: user.morningCheckinTime,
+        canMessage: user.canMessage,
         features: {
           nutrition: hasNutritionAccess(telegramUser.id),
           agentLog: hasAgentLogAccess(telegramUser.id),

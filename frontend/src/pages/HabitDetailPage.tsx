@@ -19,6 +19,7 @@ import { CountChart } from '../components/CountChart';
 import { MonthSummary } from '../components/MonthSummary';
 import { monthSummary } from '../utils/habitInsights';
 import { countTarget, setHabitSkipped, setHabitValue } from '../utils/habitActions';
+import { ensureWriteAccess } from '../utils/writeAccess';
 import type { Reminder, DayOfWeek } from '../types';
 
 const HOURS_LEVEL_LABELS = ['меньше 5 ч', '5–7 ч', '7+ ч'];
@@ -118,6 +119,8 @@ export function HabitDetailPage() {
     try {
       const saved = await saveReminder(habit.id, data);
       setReminder(saved);
+      // A reminder is useless if the bot can't write; the reminder stays saved either way.
+      if (saved.enabled && saved.days.length > 0) void ensureWriteAccess();
     } catch (err) {
       console.error('Failed to save reminder:', err);
     }

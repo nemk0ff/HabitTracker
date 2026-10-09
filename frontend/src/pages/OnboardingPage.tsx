@@ -6,6 +6,7 @@ import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { saveMe } from '../api/me';
+import { ensureWriteAccess } from '../utils/writeAccess';
 import { toast } from '../stores/toastStore';
 import { HABIT_TEMPLATES, templateHint, templateToHabit } from '../utils/habitTemplates';
 import { readableOn } from '../utils/colors';
@@ -72,6 +73,8 @@ export function OnboardingPage() {
       }
       useAuthStore.getState().patchUser({ onboarded: true, checkinTime: checkin });
       haptic('success');
+      // Without write access the check-in never arrives (user opened the app without /start).
+      if (checkin) void ensureWriteAccess();
       navigate('hub');
     } finally {
       setSaving(false);

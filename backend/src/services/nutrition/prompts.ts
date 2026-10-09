@@ -10,7 +10,7 @@
 import cron from 'node-cron';
 import type { Context } from 'grammy';
 import { prisma } from '../../db.js';
-import { bot } from '../bot.js';
+import { sendToUser, type Recipient } from '../messaging.js';
 import { hasNutritionAccess } from '../../utils/features.js';
 import { forEachSafe } from '../../utils/safe.js';
 import { track } from '../analytics.js';
@@ -55,16 +55,20 @@ function fmtKg(kg: number): string {
 
 async function recipients() {
   const goals = await prisma.nutritionGoal.findMany({ include: { user: true } });
-  return goals.filter((g) => hasNutritionAccess(g.user.telegramId));
+  // Closed channel (canMessage=false): no point computing prompts nobody will receive.
+  return goals.filter((g) => hasNutritionAccess(g.user.telegramId) && g.user.canMessage !== false);
 }
 
-async function send(chatId: bigint, text: string, keyboard: Button[][]) {
+async function send(user: Recipient, text: string, keyboard: Button[][], purpose: string) {
   try {
-    await bot.api.sendMessage(String(chatId), text, {
-      reply_markup: { inline_keyboard: keyboard.filter((row) => row.length > 0) as any },
-    });
+    await sendToUser(
+      user,
+      text,
+      { reply_markup: { inline_keyboard: keyboard.filter((row) => row.length > 0) as any } },
+      { purpose: `prompt_${purpose}` },
+    );
   } catch (e) {
-    console.error(`[prompts] send to ${chatId} failed:`, e);
+    console.error(`[prompts] send to ${user.telegramId} failed:`, e);
   }
 }
 
@@ -82,22 +86,22 @@ export async function sendMorningPrompts(): Promise<void> {
     if (sleepHabit) {
       const slept = await prisma.habitEntry.findFirst({ where: { habitId: sleepHabit.id, date: dayDate(date) } });
       if (!slept) {
-        await send(g.user.telegramId, '😴 Сколько спал этой ночью?', [
+        await send(g.user, '😴 Сколько спал этой ночью?', [
           SLEEP_HOURS.map((h) => ({ text: `${h} ч`, callback_data: `sl:${date}:${h * 60}` })),
-        ]);
+        ], 'sleep');
       }
     }
     const today = await prisma.weightEntry.findUnique({ where: { userId_date: { userId: g.userId, date: dayDate(date) } } });
     const last = await prisma.weightEntry.findFirst({ where: { userId: g.userId }, orderBy: { date: 'desc' } });
     if (!today && last) {
       const kg = last.weightKg;
-      await send(g.user.telegramId, `⚖️ Вес утром? В прошлый раз было ${fmtKg(kg)} кг`, [
+      await send(g.user, `⚖️ Вес утром? В прошлый раз было ${fmtKg(kg)} кг`, [
         [kg - 0.5, kg, kg + 0.5].map((v) => ({
           text: v === kg ? `${fmtKg(v)} — так же` : fmtKg(v),
           callback_data: `wt:${date}:${v}`,
         })),
         WEBAPP_URL ? [{ text: 'Другой вес', web_app: { url: WEBAPP_URL } }] : [],
-      ]);
+      ], 'weight');
     }
   });
 }
@@ -113,12 +117,12 @@ export async function sendTrainingPrompt(): Promise<void> {
     const entry = await prisma.habitEntry.findFirst({ where: { habitId: habit.id, date: dayDate(date) } });
     // A pass (ill / vacation) — don't ask about a workout today.
     if (entry?.skipped || isDone(habit, entry?.value)) return;
-    await send(g.user.telegramId, '💪 Была сегодня тренировка?', [
+    await send(g.user, '💪 Была сегодня тренировка?', [
       [
         { text: 'Да', callback_data: `tr:${date}:1` },
         { text: 'Нет', callback_data: `tr:${date}:0` },
       ],
-    ]);
+    ], 'training');
   });
 }
 
@@ -134,16 +138,16 @@ export async function sendDayCompletePrompt(): Promise<void> {
       _count: true,
     });
     if (sum._count === 0) {
-      await send(g.user.telegramId, '🍽 Сегодня в дневнике пусто. Запишешь, что ел?', [openDiaryRow()]);
+      await send(g.user, '🍽 Сегодня в дневнике пусто. Запишешь, что ел?', [openDiaryRow()], 'day');
       return;
     }
     const plan = await computePlan(g.userId, date);
     const target = plan.todayKcal ?? g.kcal;
     const kcal = Math.round(sum._sum.kcal ?? 0);
-    await send(g.user.telegramId, `🍽 Сегодня ${kcal} из ${target} ккал. Всё записал?`, [
+    await send(g.user, `🍽 Сегодня ${kcal} из ${target} ккал. Всё записал?`, [
       [{ text: '✅ Да, день полный', callback_data: `dc:${date}` }],
       openDiaryRow(),
-    ]);
+    ], 'day');
   });
 }
 

@@ -253,6 +253,9 @@ declare global {
         close: () => void;
         onEvent?: (event: string, cb: () => void) => void;
         offEvent?: (event: string, cb: () => void) => void;
+        isVersionAtLeast?: (version: string) => boolean;
+        /** Bot API 6.9+: asks the user to let the bot message them. */
+        requestWriteAccess?: (cb?: (granted: boolean) => void) => void;
       };
     };
   }

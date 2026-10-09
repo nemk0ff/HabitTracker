@@ -4,7 +4,7 @@
  */
 import cron from 'node-cron';
 import { prisma } from '../../db.js';
-import { bot } from '../bot.js';
+import { sendToUser } from '../messaging.js';
 import { hasNutritionAccess } from '../../utils/features.js';
 import { forEachSafe } from '../../utils/safe.js';
 import { CLAUDE_MODEL, claudeAvailable, getClaude, responseText } from '../claude.js';
@@ -132,11 +132,11 @@ export function startWeeklySummaryCron(): void {
       try {
         const goals = await prisma.nutritionGoal.findMany({ include: { user: true } });
         await forEachSafe(
-          goals.filter((g) => hasNutritionAccess(g.user.telegramId)),
+          goals.filter((g) => hasNutritionAccess(g.user.telegramId) && g.user.canMessage !== false),
           '[weekly] summary',
           (g) => `user ${g.userId}`,
           async (g) => {
-            await bot.api.sendMessage(String(g.user.telegramId), await weeklySummaryText(g.userId));
+            await sendToUser(g.user, await weeklySummaryText(g.userId), undefined, { purpose: 'weekly_summary' });
           },
         );
       } catch (e) {
