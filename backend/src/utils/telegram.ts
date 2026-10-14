@@ -32,7 +32,13 @@ export function validateInitData(initData: string, botToken: string): TelegramUs
     .update(dataCheckString)
     .digest('hex');
 
-  if (calculatedHash !== hash) return null;
+  const a = Buffer.from(calculatedHash, 'hex');
+  const b = Buffer.from(hash, 'hex');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+
+  // A leaked initData string must not mint tokens forever: accept only fresh ones (24 h).
+  const authDate = Number(params.get('auth_date'));
+  if (!Number.isFinite(authDate) || Date.now() / 1000 - authDate > 24 * 3600) return null;
 
   const userStr = params.get('user');
   if (!userStr) return null;
@@ -42,9 +48,4 @@ export function validateInitData(initData: string, botToken: string): TelegramUs
   } catch {
     return null;
   }
-}
-
-/** `start_param` (the `startapp` deep-link payload) of initData. Only trust it after `validateInitData` passed. */
-export function initDataStartParam(initData: string): string | null {
-  return new URLSearchParams(initData).get('start_param');
 }

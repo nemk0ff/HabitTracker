@@ -5,7 +5,7 @@
 import cron from 'node-cron';
 import { prisma } from '../../db.js';
 import { sendToUser } from '../messaging.js';
-import { hasNutritionAccess } from '../../utils/features.js';
+import { ownerWhere } from '../../utils/owner.js';
 import { forEachSafe } from '../../utils/safe.js';
 import { CLAUDE_MODEL, claudeAvailable, getClaude, responseText } from '../claude.js';
 import { computePlan } from './model.js';
@@ -123,16 +123,16 @@ export async function weeklySummaryText(userId: number, date = todayMsk()): Prom
   }
 }
 
-/** Sundays 15:00 UTC (18:00 MSK) — to every nutrition user with a goal. */
+/** Sundays 15:00 UTC (18:00 MSK) — to the owner, if they have a goal. */
 export function startWeeklySummaryCron(): void {
   cron.schedule(
     '0 15 * * 0',
     async () => {
       // An unhandled rejection here would crash the process on Node 20.
       try {
-        const goals = await prisma.nutritionGoal.findMany({ include: { user: true } });
+        const goals = await prisma.nutritionGoal.findMany({ where: { user: ownerWhere() }, include: { user: true } });
         await forEachSafe(
-          goals.filter((g) => hasNutritionAccess(g.user.telegramId) && g.user.canMessage !== false),
+          goals.filter((g) => g.user.canMessage !== false),
           '[weekly] summary',
           (g) => `user ${g.userId}`,
           async (g) => {

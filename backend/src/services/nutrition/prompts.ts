@@ -11,7 +11,7 @@ import cron from 'node-cron';
 import type { Context } from 'grammy';
 import { prisma } from '../../db.js';
 import { sendToUser, type Recipient } from '../messaging.js';
-import { hasNutritionAccess } from '../../utils/features.js';
+import { isOwnerTelegramId, ownerWhere } from '../../utils/owner.js';
 import { forEachSafe } from '../../utils/safe.js';
 import { track } from '../analytics.js';
 import { computePlan } from './model.js';
@@ -54,9 +54,10 @@ function fmtKg(kg: number): string {
 }
 
 async function recipients() {
-  const goals = await prisma.nutritionGoal.findMany({ include: { user: true } });
+  // A personal app: the owner only.
+  const goals = await prisma.nutritionGoal.findMany({ where: { user: ownerWhere() }, include: { user: true } });
   // Closed channel (canMessage=false): no point computing prompts nobody will receive.
-  return goals.filter((g) => hasNutritionAccess(g.user.telegramId) && g.user.canMessage !== false);
+  return goals.filter((g) => g.user.canMessage !== false);
 }
 
 async function send(user: Recipient, text: string, keyboard: Button[][], purpose: string) {
@@ -161,7 +162,7 @@ export function startDailyPrompts(): void {
 // ─── Callback handling ────────────────────────────────────────────────────────
 
 async function resolveGoal(ctx: Context) {
-  if (!ctx.from || !hasNutritionAccess(ctx.from.id)) return null;
+  if (!ctx.from || !isOwnerTelegramId(ctx.from.id)) return null;
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
   if (!user) return null;
   return { user, goal: await prisma.nutritionGoal.findUnique({ where: { userId: user.id } }) };

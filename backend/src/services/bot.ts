@@ -2,10 +2,10 @@ import { Bot, GrammyError, HttpError } from 'grammy';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { prisma } from '../db.js';
 import { track } from './analytics.js';
+import { isOwnerTelegramId } from '../utils/owner.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const WEBAPP_URL = process.env.WEBAPP_URL || '';
-const DEVELOPER_CHAT_ID = process.env.DEVELOPER_CHAT_ID || '';
 const SOCKS_PROXY = process.env.SOCKS_PROXY || '';
 
 const botOptions: ConstructorParameters<typeof Bot>[1] = {};
@@ -41,40 +41,28 @@ function openTrackerOptions() {
   };
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────────
+// ─── Owner gate ───────────────────────────────────────────────────────────────
+
+const NOT_OWNER_TEXT = 'Это личный бот 🙂';
 
 /**
- * `/start ref_<id>` (invite link `t.me/<bot>?start=ref_<id>`) from someone not registered yet: create them
- * attributed to the inviter (a `startapp=ref_<id>` start_param is handled in routes/auth.ts). Returns the new user's id, or null.
+ * A personal bot: anyone but the owner gets one short phrase per message (a popup for a button) —
+ * no app button, no tracking, no user row. Other update kinds from them are dropped silently.
  */
-async function registerReferred(from: { id: number; first_name: string; last_name?: string; username?: string }, payload: string) {
-  const { resolveReferrer } = await import('./referral.js');
-  const referrerId = await resolveReferrer(payload, null);
-  if (referrerId === null) return null;
-  try {
-    const user = await prisma.user.create({
-      data: {
-        telegramId: BigInt(from.id),
-        firstName: from.first_name,
-        lastName: from.last_name ?? null,
-        username: from.username ?? null,
-        canMessage: true,
-        referrerId,
-      },
-    });
-    track({ userId: user.id, event: 'user_registered', category: 'bot', metadata: { referrerId } });
-    return user.id;
-  } catch (e) {
-    console.error('[bot] referred registration failed:', e); // e.g. a parallel /auth created the user first
-    return resolveUserId(from.id);
+bot.use(async (ctx, next) => {
+  if (isOwnerTelegramId(ctx.from?.id)) return next();
+  if (ctx.callbackQuery) {
+    await ctx.answerCallbackQuery({ text: NOT_OWNER_TEXT }).catch(() => {});
+  } else if (ctx.message && ctx.chat?.type === 'private') {
+    await ctx.reply(NOT_OWNER_TEXT).catch(() => {});
   }
-}
+});
+
+// ─── Commands ─────────────────────────────────────────────────────────────────
 
 bot.command('start', async (ctx) => {
-  let userId = await resolveUserId(ctx.from?.id);
-  const payload = typeof ctx.match === 'string' ? ctx.match.trim() : '';
-  if (userId === null && ctx.from && payload) userId = await registerReferred(ctx.from, payload);
-  track({ userId, event: 'command_start', category: 'bot', ...(payload && { label: payload.slice(0, 40) }) });
+  const userId = await resolveUserId(ctx.from?.id);
+  track({ userId, event: 'command_start', category: 'bot' });
   // The user wrote to the bot, so it can write back (reopens a channel closed by an earlier 403).
   if (userId !== null) {
     await prisma.user.update({ where: { id: userId }, data: { canMessage: true } }).catch((e) => console.error('[bot] canMessage on /start:', e));
@@ -101,45 +89,20 @@ bot.command('help', async (ctx) => {
 });
 
 bot.command('stats', async (ctx) => {
-  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
   const { sendQuickStats } = await import('./alerts.js');
-  await sendQuickStats(DEVELOPER_CHAT_ID);
+  // Always to the owner's private chat — never into a group the command was typed in.
+  const { ownerTelegramId } = await import('../utils/owner.js');
+  await sendQuickStats(ownerTelegramId());
 });
 
-bot.command('claude_session', async (ctx) => {
-  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
+bot.command('claude_session', async () => {
   const { registerSessionStart } = await import('./claudeSessions.js');
   await registerSessionStart({ force: true });
 });
 
-bot.command('users', async (ctx) => {
-  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
-  const { sendUsersList } = await import('./alerts.js');
-  await sendUsersList(DEVELOPER_CHAT_ID);
-});
-
-bot.command('activity', async (ctx) => {
-  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
-  const { sendRecentActivity } = await import('./alerts.js');
-  await sendRecentActivity(DEVELOPER_CHAT_ID);
-});
-
-bot.command('user', async (ctx) => {
-  if (!DEVELOPER_CHAT_ID || ctx.from?.id.toString() !== DEVELOPER_CHAT_ID) return;
-  const id = Number(ctx.match?.toString().trim());
-  if (!Number.isInteger(id) || id <= 0) {
-    await ctx.reply('Использование: /user <DB id> — например /user 3\nСписок id: /users');
-    return;
-  }
-  const { sendUserDetail } = await import('./alerts.js');
-  await sendUserDetail(DEVELOPER_CHAT_ID, id);
-});
-
-/** Weekly nutrition summary on demand (nutrition-module users only). */
+/** Weekly nutrition summary on demand. */
 bot.command('week', async (ctx) => {
-  const { hasNutritionAccess } = await import('../utils/features.js');
-  if (!ctx.from || !hasNutritionAccess(ctx.from.id)) return;
-  const userId = await resolveUserId(ctx.from.id);
+  const userId = await resolveUserId(ctx.from?.id);
   if (!userId) return;
   await ctx.replyWithChatAction('typing');
   const { weeklySummaryText } = await import('./nutrition/weeklySummary.js');
@@ -218,12 +181,11 @@ bot.on('message', async (ctx) => {
     label: text?.slice(0, 80) ?? undefined,
   });
 
-  // Developer's plain text = "что я съел" → Hermes agent → diary.
-  const { hasAgentLogAccess } = await import('../utils/features.js');
-  if (text && !text.startsWith('/') && userId !== null && ctx.from && hasAgentLogAccess(ctx.from.id)) {
+  // The owner's plain text = "что я съел" → Hermes agent → diary.
+  if (text && !text.startsWith('/') && userId !== null) {
     const status = await ctx.reply('⏳ Передал агенту — обычно это 2–5 минут…');
     // Not awaited: the agent can take minutes and grammY handles updates sequentially,
-    // so waiting here would stall every other user's updates.
+    // so waiting here would stall every other update.
     void logFoodFromChat(ctx.chat.id, status.message_id, userId, text);
     return;
   }

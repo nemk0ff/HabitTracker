@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { FastifyRequest, FastifyReply } from 'fastify';
 
 export async function sharedSecretGuard(request: FastifyRequest, reply: FastifyReply) {
@@ -7,7 +8,9 @@ export async function sharedSecretGuard(request: FastifyRequest, reply: FastifyR
   }
 
   const header = request.headers.authorization;
-  if (!header?.startsWith('Bearer ') || header.slice(7) !== expected) {
+  const given = Buffer.from(header?.startsWith('Bearer ') ? header.slice(7) : '');
+  const want = Buffer.from(expected);
+  if (given.length !== want.length || !timingSafeEqual(given, want)) {
     return reply.status(401).send({ error: 'Unauthorized' });
   }
 }

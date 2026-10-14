@@ -39,32 +39,12 @@ export interface User {
   firstName: string | null;
   lastName: string | null;
   username: string | null;
-  isAdmin: boolean;
-  features: {
-    nutrition: boolean;
-    /** "Добавить текстом" through the developer's Hermes agent. */
-    agentLog: boolean;
-  };
-  /** Finished (or skipped) the first-launch template picker. */
-  onboarded?: boolean;
   /** Evening check-in time, local HH:MM; null = no check-in message. */
   checkinTime?: string | null;
   /** Optional second check-in in the morning with morning habits only (local HH:MM). */
   morningCheckinTime?: string | null;
   /** Whether the bot can message this user (Telegram write access). null = unknown. */
   canMessage?: boolean | null;
-}
-
-export interface AdminUserGroup {
-  user: {
-    id: number;
-    telegramId: string;
-    firstName: string | null;
-    lastName: string | null;
-    username: string | null;
-    lastSeenAt: string | null;
-  };
-  habits: Habit[];
 }
 
 export type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -80,12 +60,10 @@ export interface Reminder {
 
 export type Screen =
   | 'hub'
-  | 'onboarding'
   | 'home'
   | 'habit'
   | 'create'
   | 'edit'
-  | 'admin'
   | 'settings'
   | 'food-day'
   | 'food-add'
@@ -207,10 +185,4 @@ export interface MealTemplate {
   meal: Meal | null;
   items: { foodId: number; name: string; grams: number; kcal: number }[];
   totals: { kcal: number; protein: number; fat: number; carbs: number };
-}
-
-export interface InviteInfo {
-  /** t.me/<bot>?start=ref_<userId>: opens the bot chat; Start registers the referral. */
-  link: string;
-  invitedCount: number;
 }

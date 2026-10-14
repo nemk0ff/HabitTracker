@@ -1,4 +1,3 @@
-import { toDateString } from './dates';
 import type { TimeOfDay } from '../types';
 
 /**
@@ -31,7 +30,7 @@ const count = (t: Base, dailyTarget: number, timeOfDay: TimeOfDay | null = null)
   ...t, binary: false, measure: 'count', weeklyTarget: null, timeOfDay, dailyTarget,
 });
 
-/** At most 12: the onboarding grid is 3 columns + «Своя привычка». */
+/** Quick-start templates in the habit form. */
 export const HABIT_TEMPLATES: HabitTemplate[] = [
   count({ key: 'water', name: 'Вода', icon: '💧', color: '#2196F3' }, 8),
   check({ key: 'teeth', name: 'Чистить зубы', icon: '🪥', color: '#00BCD4' }, 'morning'),
@@ -64,31 +63,4 @@ export const CHALLENGE_MAX_DAYS = 120;
 /** Any challenge length the UI sends, clamped to 3..CHALLENGE_MAX_DAYS. */
 export function clampChallengeDays(n: number): number {
   return Math.max(3, Math.min(CHALLENGE_MAX_DAYS, Math.round(n)));
-}
-
-/** Shown as one-tap chips on the empty Today screen. */
-export const QUICK_TEMPLATE_KEYS = ['water', 'workout', 'reading'] as const;
-
-/** Short caption for a template tile: "каждый день", "3 раза в неделю", "часы сна". */
-export function templateHint(t: HabitTemplate): string {
-  if (t.measure === 'hours') return 'часы';
-  if (t.measure === 'count') return `${t.dailyTarget} в день`;
-  if (t.weeklyTarget === null) return 'каждый день';
-  const n = t.weeklyTarget;
-  return `${n} ${n >= 2 && n <= 4 ? 'раза' : 'раз'} в неделю`;
-}
-
-/** Payload for useHabitsStore().addHabit. */
-export function templateToHabit(t: HabitTemplate) {
-  return {
-    name: t.name,
-    icon: t.icon,
-    color: t.color,
-    binary: t.binary,
-    measure: t.measure,
-    weeklyTarget: t.weeklyTarget,
-    timeOfDay: t.timeOfDay,
-    dailyTarget: t.dailyTarget,
-    ...(t.challengeDays ? { challengeDays: t.challengeDays, challengeStart: toDateString(new Date()) } : {}),
-  };
 }

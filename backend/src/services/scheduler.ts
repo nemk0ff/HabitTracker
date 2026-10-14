@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../db.js';
 import { bot } from './bot.js';
+import { ownerWhere } from '../utils/owner.js';
 import { sendToUser, type Recipient } from './messaging.js';
 
 const DAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -94,7 +95,8 @@ async function checkAndSendReminders() {
   const { hhmm, todayStart, timestamp } = utcNow();
 
   const reminders = await prisma.reminder.findMany({
-    where: { enabled: true, habit: { archived: false } },
+    // A personal app: the owner's reminders only.
+    where: { enabled: true, habit: { archived: false, user: ownerWhere() } },
     include: {
       habit: {
         include: {

@@ -20,7 +20,7 @@ async function saveTime(field: CheckinField, time: string | null, name: string):
     useAuthStore.getState().patchUser({ [field]: time });
     haptic('success');
     toast(time ? `Сохранено · ${name} в ${time}` : `Сохранено · ${name} выключена`);
-    // The time stays saved either way; if the bot can't write, Today/Settings show a warning.
+    // The time stays saved either way; without write access the bot just can't deliver it.
     if (time) void ensureWriteAccess();
     return true;
   } catch {
@@ -38,22 +38,4 @@ export function saveCheckinTime(time: string | null): Promise<boolean> {
 /** Morning check-in with morning habits only. */
 export function saveMorningCheckinTime(time: string | null): Promise<boolean> {
   return saveTime('morningCheckinTime', time, 'утренняя сводка');
-}
-
-const BANNER_KEY = 'checkinBannerDismissed';
-
-export function isCheckinBannerDismissed(): boolean {
-  try {
-    return localStorage.getItem(BANNER_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function dismissCheckinBanner() {
-  try {
-    localStorage.setItem(BANNER_KEY, '1');
-  } catch {
-    // Private mode / blocked storage: the banner just comes back next launch.
-  }
 }

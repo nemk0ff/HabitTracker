@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from './stores/authStore';
 import { useHabitsStore } from './stores/habitsStore';
@@ -9,8 +9,6 @@ import { ChallengeCelebration } from './components/ChallengeCelebration';
 import { HomePage } from './pages/HomePage';
 import { HabitDetailPage } from './pages/HabitDetailPage';
 import { HabitFormPage } from './pages/HabitFormPage';
-import { OnboardingPage } from './pages/OnboardingPage';
-import { AdminPage } from './pages/AdminPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { FoodDayPage } from './pages/nutrition/FoodDayPage';
 import { FoodAddPage } from './pages/nutrition/FoodAddPage';
@@ -21,16 +19,9 @@ import { FoodSuggestPage } from './pages/nutrition/FoodSuggestPage';
 import { LoadingScreen } from './components/LoadingScreen';
 
 export default function App() {
-  const { user, loading: authLoading, error: authError, authenticate } = useAuthStore();
+  const { user, loading: authLoading, error: authError, forbidden, authenticate } = useAuthStore();
   const load = useHabitsStore((s) => s.load);
-  const habits = useHabitsStore((s) => s.habits);
-  const habitsLoading = useHabitsStore((s) => s.loading);
-  const habitsError = useHabitsStore((s) => s.error);
-  const navScreen = useNavStore((s) => s.screen);
-  const navigate = useNavStore((s) => s.navigate);
-  // First launch: once the habits have loaded, a user who never onboarded and has none gets the template picker.
-  const habitsRequested = useRef(false);
-  const onboardingChecked = useRef(false);
+  const screen = useNavStore((s) => s.screen);
 
   useEffect(() => {
     // Гарантированный выход из загрузки через 8 сек
@@ -92,24 +83,22 @@ export default function App() {
   }, [authenticate]);
 
   useEffect(() => {
-    if (user) {
-      habitsRequested.current = true;
-      load();
-    }
+    if (user) load();
   }, [user, load]);
-
-  useEffect(() => {
-    if (onboardingChecked.current || !user || !habitsRequested.current) return;
-    // Read the live store: in the commit that calls load(), the rendered `loading` is still the stale false.
-    const hs = useHabitsStore.getState();
-    if (hs.loading) return;
-    onboardingChecked.current = true;
-    if (hs.error) return;
-    if (!user.onboarded && !hs.habits.some((h) => !h.archived) && navScreen === 'hub') navigate('onboarding');
-  }, [user, habits.length, habitsLoading, habitsError, navScreen, navigate]);
 
   if (authLoading) {
     return <LoadingScreen />;
+  }
+
+  if (forbidden) {
+    return (
+      <div className="flex items-center justify-center h-full p-6">
+        <div className="text-center max-w-xs">
+          <p className="text-tg-text text-lg font-semibold mb-2">Это личное приложение</p>
+          <p className="text-tg-hint text-sm">Трекер работает только для своего владельца.</p>
+        </div>
+      </div>
+    );
   }
 
   if (authError) {
@@ -123,16 +112,11 @@ export default function App() {
     );
   }
 
-  // Nutrition screens are gated by the feature flag from /api/auth.
-  const screen = navScreen.startsWith('food-') && !user?.features?.nutrition ? 'hub' : navScreen;
-
   return (
     <>
     <AnimatePresence mode="wait">
       {screen === 'hub' && <TodayPage key="hub" />}
-      {screen === 'onboarding' && <OnboardingPage key="onboarding" />}
       {screen === 'home' && <HomePage key="home" />}
-      {screen === 'admin' && <AdminPage key="admin" />}
       {screen === 'settings' && <SettingsPage key="settings" />}
       {screen === 'habit' && <HabitDetailPage key="habit" />}
       {(screen === 'create' || screen === 'edit') && <HabitFormPage key="form" />}

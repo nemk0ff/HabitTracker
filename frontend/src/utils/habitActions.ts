@@ -2,9 +2,7 @@ import { useHabitsStore } from '../stores/habitsStore';
 import { useAuthStore } from '../stores/authStore';
 import { toast, type ToastAction } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
-import { toDateString } from './dates';
-import { formatHours, isClosedOn, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn, isReturningUser, isSkippedOn } from './habits';
-import { computeEarned, unlockNew, type Achievement } from './achievements';
+import { formatHours, isClosedOn, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn, isSkippedOn } from './habits';
 import type { Habit } from '../types';
 
 export const INTENSITY_LABELS = ['Легко', 'Средне', 'Тяжело'] as const;
@@ -39,30 +37,6 @@ function noMarksYet(habits: Habit[]): boolean {
   return habits.every((h) => !h.entries.some((e) => isDoneValue(h, e.value)));
 }
 
-/** No done mark or skip on any habit for `date` yet (checked before the optimistic update). */
-function noMarksOn(habits: Habit[], date: string): boolean {
-  return habits.every((h) => !isClosedOn(h, date));
-}
-
-/**
- * Runs a store write and, once the server has confirmed it, calls `onUnlocked` with the achievements
- * it unlocked (compared before / after). A failed (rolled back) write unlocks, remembers and posts nothing.
- */
-function withAchievements(write: () => Promise<boolean>, onUnlocked: (list: Achievement[]) => void) {
-  const before = computeEarned(useHabitsStore.getState().habits);
-  void write().then((ok) => {
-    if (!ok) return;
-    const unlocked = unlockNew(before, computeEarned(useHabitsStore.getState().habits));
-    if (unlocked.length > 0) onUnlocked(unlocked);
-  });
-}
-
-function achievementText(list: Achievement[]): string {
-  return list.length === 1
-    ? `🏅 Новое достижение: ${list[0]!.title}`
-    : `🏅 Новые достижения: ${list.map((a) => a.title).join(', ')}`;
-}
-
 /**
  * Sets a habit's value for a date and shows a toast with "Отменить"
  * (an accidental tap is undone in one tap instead of silently changing history).
@@ -73,11 +47,7 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
   const prev = valueOn(habit, date);
   const prevSkipped = isSkippedOn(habit, date);
   if (prev === value && !prevSkipped) return;
-  const today = toDateString(new Date());
   const firstEver = isDoneValue(habit, value) && noMarksYet(habits);
-  // First mark of today after a 3+ day break (soft return, plan §3.6).
-  const comeback =
-    !firstEver && date === today && isDoneValue(habit, value) && noMarksOn(habits, today) && isReturningUser(habits, today);
   const undo: ToastAction = { label: 'Отменить', onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped) };
   const offerIntensity = askIntensity && hasIntensity(habit) && prev === 0 && value > 0;
   const actions = offerIntensity
@@ -93,22 +63,9 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
       ]
     : [undo];
 
-  // Badges only after the server saved the mark; the first-ever toast already celebrates «Первая отметка».
-  withAchievements(
-    () => toggleEntry(habit.id, date, value),
-    (unlocked) => {
-      if (firstEver) return;
-      haptic('success');
-      toast(achievementText(unlocked), { actions, ms: 6000 });
-    },
-  );
+  void toggleEntry(habit.id, date, value);
   haptic(value > 0 ? 'light' : 'select');
 
-  if (comeback) {
-    haptic('success');
-    toast('Снова в деле 💪', { actions, ms: 6000 });
-    return;
-  }
   if (firstEver) {
     haptic('success');
     const hasCheckin = !!useAuthStore.getState().user?.checkinTime;
@@ -172,13 +129,7 @@ export function markAll(habits: Habit[], date: string, label: string) {
       },
     },
   ];
-  withAchievements(
-    async () => (await Promise.all(batch.map((b) => toggleEntry(b.id, date, b.next)))).every(Boolean),
-    (unlocked) => {
-      haptic('success');
-      toast(achievementText(unlocked), { actions, ms: 5000 });
-    },
-  );
+  for (const b of batch) void toggleEntry(b.id, date, b.next);
   haptic('light');
   toast(`${label}: отмечено ${batch.length}`, { actions, ms: 5000 });
 }

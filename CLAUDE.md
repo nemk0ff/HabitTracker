@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**Personal tool (since 14.10.2026):** the app serves ONE owner — the Telegram user `DEVELOPER_CHAT_ID`. `/api/auth` returns 403 «Это личное приложение» to anyone else, `authGuard` rejects non-owner JWTs, the bot answers strangers with one line, and every bot-initiated send selects only the owner (`utils/owner.ts`). Growth features (onboarding, invites/referrals, share cards, achievements, admin views) were removed; other users' rows stay in the DB untouched. Ideas backlog: `plans/14-10-2026-personal-ideas.md`.
+
 Habit Tracker is a **Telegram Mini App** — a React SPA served inside Telegram's WebView. Users open it via a bot button; the bot also sends reminders and delivers daily analytics reports. The backend serves the frontend as static files from `public/` and exposes a REST API.
 
 **Stack:** React 19, Vite, Tailwind CSS, Framer Motion, Zustand (frontend) · Fastify v5, Prisma, SQLite/PostgreSQL, grammY, node-cron (backend) · date-fns with Russian locale for all date formatting
@@ -57,7 +59,7 @@ HERMES_API_KEY="..."                  # Bearer for Hermes; without it "Доба�
 NUTRITION_USER_IDS="123,456"          # optional: restrict the nutrition module to these telegram ids (unset = open to everyone)
 ```
 
-**Running the backend locally without hijacking the prod bot:** grammY long-polling on a token steals updates from the VPS instance. For local UI work start it with a dummy token (`BOT_TOKEN="0:dummy"`; an empty token throws) — polling fails harmlessly. In a plain browser under `vite dev`, the app falls back to `dev-mode` auth (no Telegram initData). Note framer-motion screen transitions freeze if the browser tab is hidden (rAF paused).
+**Running the backend locally without hijacking the prod bot:** grammY long-polling on a token steals updates from the VPS instance. For local UI work start it with a dummy token and the dev login (`BOT_TOKEN="0:dummy" DEV_LOGIN=1`; an empty token throws) — polling fails harmlessly. In a plain browser under `vite dev`, the app falls back to `dev-mode` auth (no Telegram initData). Note framer-motion screen transitions freeze if the browser tab is hidden (rAF paused).
 
 Frontend uses `VITE_API_URL` (optional) — defaults to empty string so API calls go to the same origin (works when backend serves the built frontend).
 
@@ -71,7 +73,7 @@ Frontend uses `VITE_API_URL` (optional) — defaults to empty string so API call
 5. All `/api/*` routes (except `/api/auth`) require the JWT via `authGuard` middleware
 
 ### Dev Mode Bypass
-In development (`NODE_ENV !== 'production'`), sending `initData: "dev-mode"` to `/api/auth` bypasses Telegram validation and returns a test user (`telegramId: 999999`). The frontend sends this automatically when `import.meta.env.DEV` is true.
+Only when the backend runs with **`DEV_LOGIN=1`** (never set it on the VPS), sending `initData: "dev-mode"` to `/api/auth` bypasses Telegram validation and returns a test user (`telegramId: 999999`), which `utils/owner.ts` then treats as the owner. It is deliberately not keyed on `NODE_ENV`: prod runs without `NODE_ENV=production`, and the old `NODE_ENV` check left this login open in production until 14.10.2026. The frontend sends `dev-mode` automatically when `import.meta.env.DEV` is true.
 
 ### Frontend State Management
 Navigation is state-driven via Zustand — there is **no router**. `stores/navStore.ts` holds `screen` (`Screen` union in `frontend/src/types/index.ts`) plus params (`selectedHabitId`, `foodDate`, `foodMeal`, `foodId`); `navigate(screen, params?)` merges params, so ones not passed keep their values. The app starts on `'hub'`, which renders `TodayPage` (kcal left + weight quick-buttons + a tile grid of today's habits — tap toggles, chevron opens detail; `HubPage` was removed in the 07.10 design review). Habit marks go through `utils/habitActions.ts` (`setHabitValue`/`toggleHabitDay`), which shows an undo toast via `stores/toastStore.ts` + `components/Toaster.tsx` (also surfaces `habitsStore`/`nutritionStore` errors). Visual tokens live in `index.css` (`--accent`, `--protein/--fat/--carbs`, `--over`, `data-scheme` dark overrides set in `main.tsx`; Onest body + Unbounded `.font-display`); icons via `lucide-react`. Adding a screen means extending `Screen` and the `AnimatePresence` switch in `App.tsx`; `food-*` screens are forced back to `'hub'` there when `user.features.nutrition` is false. New pages use `hooks/useTelegramButtons.ts` (`useBackButton`, `useMainButton`, `haptic`) instead of wiring `window.Telegram.WebApp` by hand. `AnimatePresence` in `App.tsx` handles transitions between screens.

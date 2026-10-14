@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api, setAuthToken } from '../api/client';
+import { api, ApiError, setAuthToken } from '../api/client';
 import type { User } from '../types';
 
 const SAFETY_LOADING_MS = 8000;
@@ -8,8 +8,10 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   error: string | null;
+  /** /api/auth answered 403: this Telegram account isn't the owner of this personal app. */
+  forbidden: boolean;
   authenticate: (initData: string) => Promise<void>;
-  /** Merges locally saved settings (checkinTime, morningCheckinTime, onboarded) into the current user. */
+  /** Merges locally saved settings (checkinTime, morningCheckinTime) into the current user. */
   patchUser: (patch: Partial<User>) => void;
 }
 
@@ -26,6 +28,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   loading: true,
   error: null,
+  forbidden: false,
 
   patchUser: (patch) => set((s) => (s.user ? { user: { ...s.user, ...patch } } : s)),
 
@@ -60,6 +63,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (e: any) {
       clearTimeout(abortId);
       clearSafetyTimer();
+      if (e instanceof ApiError && e.status === 403) {
+        set({ forbidden: true, error: null, loading: false });
+        return;
+      }
       const message = e.name === 'AbortError' ? 'Сервер не отвечает. Проверьте интернет или попробуйте позже.' : (e.message || 'Ошибка входа');
       set({ error: message, loading: false });
     }

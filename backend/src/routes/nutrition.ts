@@ -1,12 +1,11 @@
 import { FastifyInstance } from 'fastify';
 import type { FoodLogEntry, MealTemplate, NutritionGoal } from '@prisma/client';
 import { prisma } from '../db.js';
-import { nutritionGuard } from '../middleware/featureGuard.js';
+import { authGuard } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
 import { favoriteIds, searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
 import { normalizeSearch, round1, scaleMacros, sumMacros } from '../services/nutrition/nutritionMath.js';
 import { getJob, jobView, startTextLog, undoJob, MEALS as AGENT_MEALS, type Meal as AgentMeal } from '../services/nutrition/textLog.js';
-import { hasAgentLogAccess } from '../utils/features.js';
 import { computePlan, weightTrend } from '../services/nutrition/model.js';
 
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
@@ -149,7 +148,7 @@ async function serializeTemplates(userId: number, templates: MealTemplate[]) {
 }
 
 export async function nutritionRoutes(app: FastifyInstance) {
-  app.addHook('onRequest', nutritionGuard);
+  app.addHook('onRequest', authGuard);
 
   // ─── Food catalog ───────────────────────────────────────────────────────────
 
@@ -593,8 +592,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
   // Agent calls take minutes, so POST starts a background job and the client polls GET.
 
   app.post<{ Body: { text?: string; date?: string; meal?: string } }>('/nutrition/text-log', async (request, reply) => {
-    const { userId, telegramId } = (request as any).user;
-    if (!hasAgentLogAccess(telegramId)) return reply.status(403).send({ error: 'Доступно только владельцу агента' });
+    const { userId } = (request as any).user;
     const text = request.body?.text?.trim();
     if (!text) return reply.status(400).send({ error: 'text is required' });
     if (text.length > 2000) return reply.status(400).send({ error: 'Слишком длинный текст' });

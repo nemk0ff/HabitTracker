@@ -7,8 +7,6 @@ import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { Archive, ArrowDown, ArrowUp, ChevronDown, ChevronRight, RotateCcw, Settings } from 'lucide-react';
 import { HabitCard } from '../components/HabitCard';
-import { AchievementsShelf } from '../components/AchievementsShelf';
-import { useToday } from '../hooks/useToday';
 import { sortHabits } from '../utils/habits';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import type { Habit } from '../types';
@@ -19,10 +17,8 @@ export function HomePage() {
   const setArchived = useHabitsStore((s) => s.setArchived);
   const navigate = useNavStore((s) => s.navigate);
   const back = useNavStore((s) => s.back);
-  const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
   const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
 
-  const today = useToday();
   const [editRequested, setEditing] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
@@ -87,14 +83,6 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-2 mb-4">
           <h1 className="text-xl font-bold text-tg-text">Прогресс</h1>
           <div className="flex items-center gap-2">
-            {isAdmin && !editing && (
-              <button
-                onClick={() => navigate('admin')}
-                className="min-h-[36px] px-3 rounded-xl text-sm font-medium bg-tg-secondary text-tg-text active:opacity-70 transition-opacity hit-44"
-              >
-                Все пользователи
-              </button>
-            )}
             {active.length > 0 && (
               <button
                 onClick={() => {
@@ -142,8 +130,6 @@ export function HomePage() {
             </AnimatePresence>
           </div>
         )}
-
-        {!editing && habits.length > 0 && <AchievementsShelf habits={habits} today={today} />}
 
         {archived.length > 0 && (
           <section className="mt-6">

@@ -24,6 +24,8 @@ import {
 import { sendToUser } from '../src/services/messaging.js';
 
 const telegramId = BigInt(9_000_000_000 + Math.floor(Math.random() * 1_000_000));
+// A personal app: callbacks are honoured for the owner only, so the temp user plays the owner.
+process.env.DEVELOPER_CHAT_ID = String(telegramId);
 const clock = localClock(new Date(), -180);
 const today = clock.date;
 
@@ -82,6 +84,9 @@ try {
   console.log(`\n3-day-old tap → alert=${old.alert} "${old.answer}"`);
   const foreign = await handleCheckinCallback(telegramId, `ci:1:${today}:1`);
   console.log(`foreign habit → alert=${foreign.alert} "${foreign.answer}"`);
+
+  const stranger = await handleCheckinCallback(telegramId + 1n, `ci:${sport.id}:${today}:1`);
+  console.log(`non-owner tap → alert=${stranger.alert} "${stranger.answer}" (expect alert, Недоступно)`);
 
   const done = await handleCheckinCallback(telegramId, `cd:${today}`);
   if (done.message) show('Готово', done.message);

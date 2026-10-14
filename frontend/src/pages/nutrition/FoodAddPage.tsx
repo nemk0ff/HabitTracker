@@ -6,7 +6,6 @@ import { useNutritionStore } from '../../stores/nutritionStore';
 import { PortionSheet, type PortionTarget } from '../../components/nutrition/PortionSheet';
 import { AgentLogPanel } from '../../components/nutrition/AgentLogPanel';
 import { FavoriteStar } from '../../components/nutrition/FavoriteStar';
-import { useAuthStore } from '../../stores/authStore';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { fetchMyFoods, searchFoods } from '../../api/nutrition';
 import { NUTRITION_COLOR, fmt, foodSourceLabel, mealLabel } from '../../utils/nutrition';
@@ -26,7 +25,6 @@ export function FoodAddPage() {
     const fav = await toggleFavorite({ ...f, favorite: isFav(f) });
     setFavOverride((o) => ({ ...o, [f.id]: fav }));
   };
-  const agentLog = useAuthStore((s) => !!s.user?.features?.agentLog);
 
   const [tab, setTab] = useState<Tab>('search');
   const [query, setQuery] = useState('');
@@ -116,13 +114,13 @@ export function FoodAddPage() {
       <div className="p-4 pb-24">
         <h1 className="text-xl font-bold text-tg-text mb-3">Добавить: {mealLabel(foodMeal).toLowerCase()}</h1>
 
-        {/* Tabs (the agent tab is developer-only) */}
+        {/* Tabs */}
           <div className="flex bg-tg-section rounded-xl p-1 mb-4">
             {(
               [
                 ['search', '🔍 Поиск'],
                 ['templates', templates.length ? `🍽 Наборы · ${templates.length}` : '🍽 Наборы'],
-                ...(agentLog ? [['text', '✨ Текстом']] : []),
+                ['text', '✨ Текстом'],
               ] as [Tab, string][]
             ).map(([key, label]) => (
               <button
@@ -150,7 +148,7 @@ export function FoodAddPage() {
               haptic('medium');
             }}
           />
-        ) : tab === 'search' || !agentLog ? (
+        ) : tab === 'search' ? (
           <>
             <input
               autoFocus

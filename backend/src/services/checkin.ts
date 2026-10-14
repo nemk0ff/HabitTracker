@@ -15,6 +15,7 @@ import { prisma } from '../db.js';
 import { track } from './analytics.js';
 import { forEachSafe } from '../utils/safe.js';
 import { sendToUser } from './messaging.js';
+import { isOwnerTelegramId, ownerWhere } from '../utils/owner.js';
 import {
   addDays,
   challengeProgress,
@@ -275,7 +276,8 @@ export async function sendDueCheckins(now = new Date()): Promise<void> {
 async function sendDue(kind: CheckinKind, now: Date): Promise<void> {
   const morning = kind === 'morning';
   const users = await prisma.user.findMany({
-    where: morning ? { morningCheckinTime: { not: null } } : { checkinTime: { not: null } },
+    // A personal app: the owner only.
+    where: { AND: [ownerWhere(), morning ? { morningCheckinTime: { not: null } } : { checkinTime: { not: null } }] },
   });
   const due = users
     .map((u) => ({ user: u, clock: localClock(now, u.tzOffset) }))
@@ -362,6 +364,7 @@ const reject = (answer: string): CheckinCallbackResult => ({ answer, alert: true
 export async function handleCheckinCallback(telegramId: number | bigint, data: string): Promise<CheckinCallbackResult> {
   const m = data.match(/^(?:ci:(\d+):(\d{4}-\d{2}-\d{2}):(-1|\d+)|cd:(\d{4}-\d{2}-\d{2}))(:m)?$/);
   if (!m) return reject('Неизвестная кнопка');
+  if (!isOwnerTelegramId(telegramId)) return reject('Недоступно');
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
   if (!user) return reject('Недоступно');
 

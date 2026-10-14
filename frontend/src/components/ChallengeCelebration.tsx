@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Share2 } from 'lucide-react';
 import { BottomSheet } from './nutrition/BottomSheet';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useAuthStore } from '../stores/authStore';
@@ -9,7 +8,6 @@ import { haptic } from '../hooks/useTelegramButtons';
 import { challengeProgress } from '../utils/habitStats';
 import { pluralDays } from '../utils/habits';
 import { readableOn } from '../utils/colors';
-import { shareHabitProgress } from '../utils/shareCard';
 import type { Habit } from '../types';
 
 function celebratedKey(h: Pick<Habit, 'id' | 'challengeStart' | 'challengeDays'>): string {
@@ -37,14 +35,14 @@ const shownThisSession = new Set<string>();
 
 /**
  * One-time «Челлендж пройден!» sheet: pops up (on any screen) once a challenge habit reaches its
- * goal, offers to share the card and to keep the habit going without the challenge.
+ * goal, offers to keep the habit going without the challenge.
  */
 export function ChallengeCelebration() {
   const habits = useHabitsStore((s) => s.habits);
   const editHabit = useHabitsStore((s) => s.editHabit);
   const today = useToday();
   const [habitId, setHabitId] = useState<number | null>(null);
-  const [busy, setBusy] = useState<'share' | 'continue' | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const finished = useMemo(
     () =>
@@ -87,18 +85,11 @@ export function ChallengeCelebration() {
     setHabitId(null);
   };
 
-  const share = async () => {
-    if (!habit || busy) return;
-    setBusy('share');
-    await shareHabitProgress(habit);
-    setBusy(null);
-  };
-
   const keepGoing = async () => {
     if (!habit || busy) return;
-    setBusy('continue');
+    setBusy(true);
     const ok = await editHabit(habit.id, { challengeDays: null, challengeStart: null });
-    setBusy(null);
+    setBusy(false);
     if (ok) {
       haptic('success');
       close();
@@ -129,21 +120,12 @@ export function ChallengeCelebration() {
           <div className="w-full flex flex-col gap-2 mt-6">
             <button
               type="button"
-              onClick={() => void share()}
-              disabled={busy !== null}
-              className="w-full min-h-[52px] rounded-xl font-semibold text-base flex items-center justify-center gap-2 active:opacity-80 disabled:opacity-60"
+              onClick={() => void keepGoing()}
+              disabled={busy}
+              className="w-full min-h-[52px] rounded-xl font-semibold text-base active:opacity-80 disabled:opacity-60"
               style={{ backgroundColor: habit.color, color: readableOn(habit.color) }}
             >
-              <Share2 size={18} aria-hidden />
-              {busy === 'share' ? 'Готовлю картинку…' : 'Поделиться'}
-            </button>
-            <button
-              type="button"
-              onClick={() => void keepGoing()}
-              disabled={busy !== null}
-              className="w-full min-h-[52px] rounded-xl font-semibold text-base bg-tg-section text-tg-text active:opacity-70 disabled:opacity-60"
-            >
-              {busy === 'continue' ? 'Сохраняю…' : 'Продолжить как привычку'}
+              {busy ? 'Сохраняю…' : 'Продолжить как привычку'}
             </button>
             <button type="button" onClick={close} className="w-full min-h-[44px] text-sm text-tg-hint active:opacity-70">
               Закрыть

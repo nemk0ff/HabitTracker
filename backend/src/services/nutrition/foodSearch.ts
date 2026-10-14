@@ -29,26 +29,7 @@ export async function favoriteIds(userId: number): Promise<Set<number>> {
   return new Set(rows.map((r) => r.foodId));
 }
 
-/**
- * The developer's own products (Лавка / Пятёрочка imports, restaurant items, agent finds)
- * are a shared catalog: every user can find, log and star them, but only the developer
- * edits them. Resolved once at startup — see initSharedCatalog().
- */
-let sharedOwnerId: number | null = null;
-
-export async function initSharedCatalog(): Promise<void> {
-  const devTelegramId = process.env.DEVELOPER_CHAT_ID;
-  if (!devTelegramId) return;
-  try {
-    const dev = await prisma.user.findUnique({ where: { telegramId: BigInt(devTelegramId) }, select: { id: true } });
-    sharedOwnerId = dev?.id ?? null;
-    console.log(`[foods] shared catalog owner: ${sharedOwnerId ?? 'none'}`);
-  } catch (e) {
-    console.error('[foods] could not resolve the shared catalog owner:', e);
-  }
-}
-
-/** `own` is relative to the viewer: the developer's shared products aren't «Мой» for others. */
+/** `own`: the viewer's own product (base catalog and Open Food Facts rows have no owner). */
 export function serializeFood(f: Food, favIds: Set<number> | undefined, viewerId: number) {
   return {
     id: f.id,
@@ -66,10 +47,9 @@ export function serializeFood(f: Food, favIds: Set<number> | undefined, viewerId
   };
 }
 
-/** Foods visible to a user: base catalog (ownerId null) + their own + the developer's shared products. */
+/** Foods visible to a user: base catalog (ownerId null) + their own. */
 export function visibleTo(userId: number) {
-  const owners = sharedOwnerId !== null && sharedOwnerId !== userId ? [userId, sharedOwnerId] : [userId];
-  return { OR: [{ ownerId: null }, { ownerId: { in: owners } }] };
+  return { OR: [{ ownerId: null }, { ownerId: userId }] };
 }
 
 /** True when `stem` starts a word in `text` ("кол" starts "кола", not "шоколад"). */

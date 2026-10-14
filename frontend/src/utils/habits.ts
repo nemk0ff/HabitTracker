@@ -1,4 +1,4 @@
-import { addDays, differenceInCalendarDays, parseISO, startOfWeek, subWeeks } from 'date-fns';
+import { addDays, parseISO, startOfWeek, subWeeks } from 'date-fns';
 import { toDateString } from './dates';
 import { pluralForm } from './plural';
 import { habitStartDate } from './habitStats';
@@ -156,35 +156,6 @@ export function closedDaysStreak(habits: Habit[], today: string): number {
     cursor = addDays(cursor, -1);
   }
   return streak;
-}
-
-/**
- * Latest activity on any habit strictly before `before` (YYYY-MM-DD) — a done mark or a skip
- * (a deliberate pass is activity too) — or null if there is none.
- */
-export function lastMarkDate(habits: Habit[], before: string): string | null {
-  let last: string | null = null;
-  for (const h of habits) {
-    for (const e of h.entries) {
-      if (!e.skipped && !isDoneValue(h, e.value)) continue;
-      if (e.date < before && (last === null || e.date > last)) last = e.date;
-    }
-  }
-  return last;
-}
-
-/** Days without any mark or skip after which the user counts as returning. */
-export const RETURN_BREAK_DAYS = 3;
-
-/**
- * The user has marks, but the last mark or skip before today is ≥3 days old: Today greets them
- * softly and hides zero streaks. A vacation run of skips is not a break. Stable for the whole
- * day — today's own marks don't flip it.
- */
-export function isReturningUser(habits: Habit[], today: string): boolean {
-  const last = lastMarkDate(habits, today);
-  if (last === null) return false;
-  return differenceInCalendarDays(parseISO(today), parseISO(last)) >= RETURN_BREAK_DAYS;
 }
 
 /**

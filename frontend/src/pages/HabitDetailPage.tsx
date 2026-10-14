@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, BellOff, ChevronRight, Pencil, Share2 } from 'lucide-react';
+import { Bell, BellOff, ChevronRight, Pencil } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
@@ -10,9 +10,8 @@ import { StatCard } from '../components/StatCard';
 import { NotificationSheet, utcTimeToLocal } from '../components/NotificationSheet';
 import { fetchReminder, saveReminder } from '../api/habits';
 import { HoursSheet } from '../components/HoursSheet';
-import { formatHours, isCountHabit, isHoursHabit, isReturningUser, isSkippedOn, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
+import { formatHours, isCountHabit, isHoursHabit, isSkippedOn, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
 import { averageValue, challengeProgress, formatNumber, streaks, valueOn } from '../utils/habitStats';
-import { shareHabitProgress } from '../utils/shareCard';
 import { ChallengeBar } from '../components/ChallengeCelebration';
 import { toDateString } from '../utils/dates';
 import { HabitDaySheet } from '../components/HabitDaySheet';
@@ -32,13 +31,11 @@ export function HabitDetailPage() {
   );
   const habit = useHabitsStore((s) => s.habits.find((h) => h.id === selectedHabitId));
   const removeHabit = useHabitsStore((s) => s.removeHabit);
-  const allHabits = useHabitsStore((s) => s.habits);
   const [showConfirm, setShowConfirm] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [reminder, setReminder] = useState<Reminder | null>(null);
   const [hoursDate, setHoursDate] = useState<string | null>(null);
   const [dayDate, setDayDate] = useState<string | null>(null);
-  const [sharing, setSharing] = useState(false);
 
   const loadReminder = useCallback(async () => {
     if (!selectedHabitId) return;
@@ -109,18 +106,6 @@ export function HabitDetailPage() {
           { label: 'За месяц', value: monthRateText },
         ];
 
-  // After a break a row of zeros only discourages: show just the numbers that carry good news.
-  const returning = isReturningUser(allHabits, today);
-  const visibleStats = returning ? stats.filter((s) => !(s.streak && s.value === 0)) : stats;
-
-  const share = async () => {
-    if (sharing) return;
-    haptic('light');
-    setSharing(true);
-    await shareHabitProgress(habit);
-    setSharing(false);
-  };
-
   const handleDelete = async () => {
     await removeHabit(habit.id);
     haptic('warning');
@@ -163,7 +148,7 @@ export function HabitDetailPage() {
 
         {/* Stats */}
         <div className="flex gap-2 mb-3">
-          {visibleStats.map((s) => (
+          {stats.map((s) => (
             <StatCard key={s.label} label={s.label} value={s.value} color={habit.color} />
           ))}
         </div>
@@ -186,16 +171,6 @@ export function HabitDetailPage() {
             {reminderOn ? utcTimeToLocal(reminder!.time) : 'выкл'}
           </span>
           <ChevronRight size={16} className="text-tg-hint" aria-hidden />
-        </button>
-
-        <button
-          onClick={() => void share()}
-          disabled={sharing}
-          className="w-full min-h-[48px] px-4 -mt-3 mb-5 rounded-2xl bg-tg-section flex items-center gap-3 text-left active:opacity-70 disabled:opacity-60 transition-opacity"
-        >
-          <Share2 size={18} strokeWidth={1.5} style={{ color: habit.color }} aria-hidden />
-          <span className="flex-1 text-sm text-tg-text">{sharing ? 'Готовлю картинку…' : 'Поделиться прогрессом'}</span>
-          <span className="text-xs text-tg-hint">картинка в чат</span>
         </button>
 
         <ChallengeBlock habit={habit} today={today} />
