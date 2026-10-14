@@ -6,7 +6,7 @@ import { track } from '../services/analytics.js';
 import { favoriteIds, searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
 import { normalizeSearch, round1, scaleMacros, sumMacros } from '../services/nutrition/nutritionMath.js';
 import { getJob, jobView, startTextLog, undoJob, MEALS as AGENT_MEALS, type Meal as AgentMeal } from '../services/nutrition/textLog.js';
-import { computePlan, weightTrend } from '../services/nutrition/model.js';
+import { computePlan, parsePhases, validatePhases, weightTrend } from '../services/nutrition/model.js';
 
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 type Meal = (typeof MEALS)[number];
@@ -60,6 +60,8 @@ function serializeGoal(g: NutritionGoal | null) {
     targetDate: g.targetDate ? dayString(g.targetDate) : null,
     trainingHabitId: g.trainingHabitId,
     sleepHabitId: g.sleepHabitId,
+    proteinPerKg: g.proteinPerKg,
+    phases: parsePhases(g.phases),
   };
 }
 
@@ -679,6 +681,8 @@ export async function nutritionRoutes(app: FastifyInstance) {
       targetDate?: string | null;
       trainingHabitId?: number | null;
       sleepHabitId?: number | null;
+      proteinPerKg?: number | null;
+      phases?: unknown;
     };
   }>('/nutrition/goal', async (request, reply) => {
     const userId = (request as any).user.userId;
@@ -702,7 +706,25 @@ export async function nutritionRoutes(app: FastifyInstance) {
     const sleepHabitId = await ownHabit(b.sleepHabitId, 'hours');
     if (trainingHabitId === undefined) return reply.status(400).send({ error: 'invalid trainingHabitId' });
     if (sleepHabitId === undefined) return reply.status(400).send({ error: 'sleepHabitId must be your hours habit' });
+    // Omitted proteinPerKg/phases keep the stored value; null clears it.
+    let proteinPerKg: number | null | undefined = undefined;
+    if (b.proteinPerKg === null) proteinPerKg = null;
+    else if (b.proteinPerKg !== undefined) {
+      if (typeof b.proteinPerKg !== 'number' || !Number.isFinite(b.proteinPerKg) || b.proteinPerKg < 1.2 || b.proteinPerKg > 3) {
+        return reply.status(400).send({ error: 'proteinPerKg must be between 1.2 and 3.0 or null' });
+      }
+      proteinPerKg = Math.round(b.proteinPerKg * 100) / 100;
+    }
+    let phases: string | null | undefined = undefined;
+    if (b.phases === null) phases = null;
+    else if (b.phases !== undefined) {
+      const v = validatePhases(b.phases);
+      if (typeof v === 'string') return reply.status(400).send({ error: v });
+      phases = v.length ? JSON.stringify(v) : null;
+    }
     const data = {
+      ...(proteinPerKg !== undefined && { proteinPerKg }),
+      ...(phases !== undefined && { phases }),
       trainingHabitId,
       sleepHabitId,
       kcal: Math.round(b.kcal),

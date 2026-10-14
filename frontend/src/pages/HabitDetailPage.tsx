@@ -217,7 +217,7 @@ export function HabitDetailPage() {
           <div className="flex items-center justify-center gap-2 mb-8 text-xs text-tg-hint">
             <div
               className="w-4 h-4 rounded-[3px]"
-              style={{ backgroundColor: window.Telegram?.WebApp?.colorScheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
+              style={{ backgroundColor: document.documentElement.dataset.scheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
             />
             <span>Не выполнено</span>
             <div className="w-4 h-4 rounded-[3px]" style={{ backgroundColor: habit.color }} />
@@ -233,7 +233,7 @@ export function HabitDetailPage() {
                 style={{
                   backgroundColor:
                     v === 0
-                      ? (window.Telegram?.WebApp?.colorScheme === 'dark'
+                      ? (document.documentElement.dataset.scheme === 'dark'
                           ? 'rgba(255,255,255,0.08)'
                           : 'rgba(0,0,0,0.06)')
                       : `rgba(${parseInt(habit.color.slice(1, 3), 16)}, ${parseInt(habit.color.slice(3, 5), 16)}, ${parseInt(habit.color.slice(5, 7), 16)}, ${[0, 0.3, 0.6, 1][v]})`,

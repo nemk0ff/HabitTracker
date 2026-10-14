@@ -182,6 +182,10 @@ model NutritionGoal {
   /// Habits that feed the model: training days (done/not done) and sleep (hours)
   trainingHabitId Int?
   sleepHabitId    Int?
+  /// Protein target as g per kg of the weight trend; null = manual `protein` (or 1.8 g/kg default)
+  proteinPerKg    Float?
+  /// JSON GoalPhase[] ({type: bulk|cut|maintain, until: YYYY-MM-DD, targetWeightKg?, rateKgPerWeek?}), ordered by `until`
+  phases          String?
   updatedAt       DateTime  @updatedAt
 }
 

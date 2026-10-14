@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
+import { loadAppearance, setAppearance, type Appearance } from '../utils/appearance';
 import { CHECKIN_PRESETS, MORNING_CHECKIN_PRESETS, saveCheckinTime, saveMorningCheckinTime } from '../utils/checkin';
 
 /** User settings: the evening check-in and (with morning habits) the morning one. */
@@ -27,6 +28,10 @@ export function SettingsPage() {
     >
       <div className="p-4 pb-10">
         <h1 className="text-xl font-semibold text-tg-text mb-5">Настройки</h1>
+
+        <AppearanceSection />
+
+        <div className="mt-8" />
 
         <TimeSection
           title="Вечерняя сводка в боте"
@@ -52,6 +57,78 @@ export function SettingsPage() {
         )}
       </div>
     </motion.div>
+  );
+}
+
+/** №23 «Вид»: theme and font size, stored on this device. */
+function AppearanceSection() {
+  const [a, setA] = useState<Appearance>(loadAppearance);
+  const change = (next: Appearance) => {
+    haptic('select');
+    setA(next);
+    setAppearance(next);
+  };
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-tg-text mb-3">Вид</h2>
+      <Segmented
+        label="Тема"
+        value={a.theme}
+        options={[
+          ['telegram', 'Как в Telegram'],
+          ['dark', 'Тёмная'],
+        ]}
+        onChange={(theme) => change({ ...a, theme })}
+      />
+      <div className="mt-3" />
+      <Segmented
+        label="Шрифт"
+        value={a.font}
+        options={[
+          ['normal', 'Обычный'],
+          ['large', 'Крупный'],
+        ]}
+        onChange={(font) => change({ ...a, font })}
+      />
+    </section>
+  );
+}
+
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: [T, string][];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div>
+      <div className="text-sm text-tg-hint mb-1.5 px-1">{label}</div>
+      <div className="flex gap-1 p-1 rounded-2xl bg-tg-section" role="radiogroup" aria-label={label}>
+        {options.map(([v, l]) => (
+          <button
+            key={v}
+            type="button"
+            role="radio"
+            aria-checked={value === v}
+            onClick={() => value !== v && onChange(v)}
+            className="flex-1 min-h-[44px] rounded-xl text-sm font-medium transition-colors"
+            style={
+              value === v
+                ? { backgroundColor: 'var(--accent)', color: '#fff' }
+                : { color: 'var(--tg-theme-text-color)' }
+            }
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

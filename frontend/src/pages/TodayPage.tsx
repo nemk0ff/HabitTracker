@@ -15,7 +15,8 @@ import { WeightSheet } from '../components/nutrition/WeightSheet';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { useToday } from '../hooks/useToday';
 import { capitalizeFirst } from '../utils/dates';
-import { MACRO_COLORS, fmt, mealByTime } from '../utils/nutrition';
+import { pluralForm } from '../utils/plural';
+import { MACRO_COLORS, fallbackProtein, fmt, mealByTime } from '../utils/nutrition';
 import {
   TIME_OF_DAY,
   closedDaysStreak,
@@ -102,8 +103,15 @@ export function TodayPage() {
   const target = plan?.todayKcal ?? day?.goal?.kcal ?? null;
   const eaten = day?.totals.kcal ?? 0;
   const left = target !== null ? target - eaten : null;
-  const proteinTarget = plan?.proteinTarget ?? day?.goal?.protein ?? null;
+  const proteinTarget = plan?.proteinTarget ?? fallbackProtein(day?.goal);
   const proteinLeft = proteinTarget !== null ? Math.max(0, proteinTarget - (day?.totals.protein ?? 0)) : null;
+
+  // Sleep last night: the model's figure, else today's entry of the linked (or first) hours habit.
+  const sleepHabit =
+    active.find((h) => h.id === day?.goal?.sleepHabitId) ?? active.find((h) => isHoursHabit(h)) ?? null;
+  const sleepEntry = sleepHabit?.entries.find((e) => e.date === today)?.value;
+  const sleepH = plan?.sleepLastNightH ?? (sleepEntry ? sleepEntry / 60 : null);
+  const habitsRef = useRef<HTMLDivElement>(null);
 
   const logWeight = async (kg: number) => {
     await saveWeight(today, kg);
@@ -141,24 +149,22 @@ export function TodayPage() {
             <h1 className="text-xl font-semibold text-tg-text pt-2">
               {capitalizeFirst(format(parseISO(today), 'EEEE, d MMMM', { locale: ru }))}
             </h1>
-            {active.length > 0 && (
-              <div className="mt-2">
-                <div className="flex items-baseline gap-2">
-                  {/* The habits count is the screen's big number unless the kcal block already holds that role. */}
-                  <span
-                    className="text-2xl font-semibold leading-none"
-                    style={{ color: closed ? 'var(--accent)' : 'var(--tg-theme-text-color)' }}
-                  >
-                    {dueToday === 0 ? 'Сегодня пропуск' : `${markedToday} из ${dueToday}`}
-                  </span>
-                  {dueToday > 0 && <span className="text-sm text-tg-hint">сегодня</span>}
-                </div>
-                {closed && (
-                  <p className="text-sm font-medium mt-1.5" style={{ color: 'var(--accent)' }}>
-                    День закрыт ✓ · серия {pluralDays(closedStreak)}
-                  </p>
-                )}
-              </div>
+            <StatusLine
+              kcalLeft={left}
+              proteinLeft={proteinLeft}
+              habitsDone={active.length > 0 && dueToday > 0 ? markedToday : null}
+              habitsDue={dueToday}
+              habitsClosed={closed}
+              sleepH={sleepH}
+              onFood={() => navigate('food-day', { foodDate: today })}
+              onHabits={() => habitsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              onSleep={sleepHabit ? () => openHabit(sleepHabit.id) : undefined}
+            />
+            {active.length > 0 && dueToday === 0 && <p className="text-sm text-tg-hint mt-1.5">Сегодня пропуск</p>}
+            {closed && (
+              <p className="text-sm font-medium mt-1.5" style={{ color: 'var(--accent)' }}>
+                День закрыт ✓ · серия {pluralDays(closedStreak)}
+              </p>
             )}
           </div>
           <button
@@ -257,7 +263,7 @@ export function TodayPage() {
         </section>
 
         {/* Habits: tap a tile to mark today */}
-        <div className="flex items-baseline justify-between mb-2">
+        <div ref={habitsRef} className="flex items-baseline justify-between mb-2 scroll-mt-4">
           <h2 className="text-base font-semibold text-tg-text">Привычки</h2>
           <button onClick={() => navigate('home')} className="text-sm text-tg-hint flex items-center min-h-[44px] -my-2">
             Прогресс <ChevronRight size={16} aria-hidden />
@@ -312,3 +318,76 @@ export function TodayPage() {
     </motion.div>
   );
 }
+
+/** №21: one glanceable line under the date — each part links to where it's tracked; parts without data are omitted. */
+function StatusLine({
+  kcalLeft,
+  proteinLeft,
+  habitsDone,
+  habitsDue,
+  habitsClosed,
+  sleepH,
+  onFood,
+  onHabits,
+  onSleep,
+}: {
+  kcalLeft: number | null;
+  proteinLeft: number | null;
+  habitsDone: number | null;
+  habitsDue: number;
+  habitsClosed: boolean;
+  sleepH: number | null;
+  onFood: () => void;
+  onHabits: () => void;
+  onSleep?: () => void;
+}) {
+  const parts: { key: string; text: string; label: string; color?: string; onClick?: () => void }[] = [];
+  if (kcalLeft !== null) {
+    parts.push({
+      key: 'kcal',
+      text: kcalLeft >= 0 ? `${fmt(kcalLeft)} ккал` : `+${fmt(-kcalLeft)} ккал`,
+      label: kcalLeft >= 0 ? `Осталось ${fmt(kcalLeft)} ккал` : `Сверх нормы ${fmt(-kcalLeft)} ккал`,
+      color: kcalLeft < 0 ? 'var(--over)' : undefined,
+      onClick: onFood,
+    });
+  }
+  if (proteinLeft !== null) {
+    parts.push({
+      key: 'protein',
+      text: proteinLeft > 0 ? `${fmt(proteinLeft)} г белка` : 'белок ✓',
+      label: proteinLeft > 0 ? `Осталось ${fmt(proteinLeft)} г белка` : 'Белок добран',
+      onClick: onFood,
+    });
+  }
+  if (habitsDone !== null) {
+    parts.push({
+      key: 'habits',
+      text: `${habitsDone}/${habitsDue} ${pluralForm(habitsDue, 'привычка', 'привычки', 'привычек')}`,
+      label: `Привычки: ${habitsDone} из ${habitsDue}`,
+      color: habitsClosed ? 'var(--accent)' : undefined,
+      onClick: onHabits,
+    });
+  }
+  if (sleepH !== null && sleepH > 0) {
+    parts.push({ key: 'sleep', text: `${fmt(sleepH, 1)} ч сна`, label: `Сон ${fmt(sleepH, 1)} ч`, onClick: onSleep });
+  }
+  if (parts.length === 0) return null;
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center text-[15px] text-tg-text tabular-nums leading-tight">
+      {parts.map((p, i) => (
+        <span key={p.key} className="inline-flex items-center">
+          {i > 0 && <span className="text-tg-hint px-1.5" aria-hidden>·</span>}
+          {p.onClick ? (
+            <button onClick={p.onClick} aria-label={p.label} className="min-h-[32px] active:opacity-60" style={{ color: p.color }}>
+              {p.text}
+            </button>
+          ) : (
+            <span aria-label={p.label} style={{ color: p.color }}>{p.text}</span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+

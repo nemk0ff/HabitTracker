@@ -39,6 +39,15 @@ export function fmt(n: number, digits = 0): string {
   return round(n, digits).toLocaleString('ru-RU', { maximumFractionDigits: digits });
 }
 
+/**
+ * Protein target when the model's plan isn't loaded: only a manual grams goal is usable —
+ * a per-kg goal follows the weight trend, so its stored grams would be stale (null instead).
+ */
+export function fallbackProtein(goal: Pick<NutritionGoal, 'protein' | 'proteinPerKg'> | null | undefined): number | null {
+  if (!goal || goal.proteinPerKg != null) return null;
+  return goal.protein ?? null;
+}
+
 export function scaleMacros(per100: Macros, grams: number): Macros {
   const k = grams / 100;
   return {

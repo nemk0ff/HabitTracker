@@ -12,6 +12,7 @@ import { toDateString } from '../../utils/dates';
 import {
   NUTRITION_COLOR,
   computeForecast,
+  fallbackProtein,
   fmt,
   goalLevel,
   isOnTarget,
@@ -47,6 +48,7 @@ export function FoodStatsPage() {
   if (!stats) return <div className="scrollable flex items-center justify-center text-tg-hint">Загрузка...</div>;
 
   const goalKcal = stats.goal?.kcal ?? null;
+  const proteinTarget = plan?.proteinTarget ?? fallbackProtein(stats.goal);
   // Averages over logged days only — an unlogged day isn't a zero-calorie day.
   const since = (n: number) => toDateString(subDays(new Date(), n - 1));
   const last7 = stats.days.filter((d) => d.date >= since(7) && d.kcal > 0);
@@ -84,7 +86,7 @@ export function FoodStatsPage() {
           <div className="bg-tg-section rounded-2xl p-4 text-sm">
             <div className="text-tg-hint text-xs mb-2">Среднее БЖУ за 7 дней</div>
             <div className="flex justify-between text-tg-text">
-              <span>Б {fmt(avg7.protein)}{stats.goal?.protein ? ` / ${stats.goal.protein}` : ''} г</span>
+              <span>Б {fmt(avg7.protein)}{proteinTarget ? ` / ${proteinTarget}` : ''} г</span>
               <span>Ж {fmt(avg7.fat)}{stats.goal?.fat ? ` / ${stats.goal.fat}` : ''} г</span>
               <span>У {fmt(avg7.carbs)}{stats.goal?.carbs ? ` / ${stats.goal.carbs}` : ''} г</span>
             </div>

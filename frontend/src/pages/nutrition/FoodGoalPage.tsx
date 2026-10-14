@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { parseISO, format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { useNavStore } from '../../stores/navStore';
+import { toast } from '../../stores/toastStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
 import { useHabitsStore } from '../../stores/habitsStore';
 import { isCountHabit, isHoursHabit } from '../../utils/habits';
@@ -10,7 +11,31 @@ import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramBut
 import { deleteWeight, fetchStats, saveWeight } from '../../api/nutrition';
 import { toDateString } from '../../utils/dates';
 import { ACTIVITY_LEVELS, NUTRITION_COLOR, calculateGoal, fmt, type Sex } from '../../utils/nutrition';
-import type { Habit, WeightPoint } from '../../types';
+import { PHASE_COLORS, PHASE_LABELS, phaseTimeline } from '../../utils/phases';
+import type { GoalPhase, Habit, PhaseType, WeightPoint } from '../../types';
+
+const PROTEIN_PER_KG_PRESETS = [1.6, 1.8, 2.0, 2.2];
+const DEFAULT_PROTEIN_PER_KG = 1.8;
+
+/** Editable phase row; numbers stay strings while typing. */
+interface PhaseDraft {
+  key: number;
+  type: PhaseType;
+  until: string;
+  by: 'weight' | 'rate';
+  target: string;
+  rate: string;
+}
+
+let phaseKey = 0;
+const toDraft = (p: GoalPhase): PhaseDraft => ({
+  key: ++phaseKey,
+  type: p.type,
+  until: p.until,
+  by: p.rateKgPerWeek != null && p.targetWeightKg == null ? 'rate' : 'weight',
+  target: p.targetWeightKg != null ? String(p.targetWeightKg) : '',
+  rate: p.rateKgPerWeek != null ? String(Math.abs(p.rateKgPerWeek)) : '',
+});
 
 const CALC_STORAGE_KEY = 'nutrition-calc-profile';
 
@@ -44,10 +69,15 @@ const str = (n: number | null | undefined) => (n === null || n === undefined ? '
 
 export function FoodGoalPage() {
   const back = useNavStore((s) => s.back);
-  const { goal, goalLoaded, loadGoal, setGoal } = useNutritionStore();
+  const { goal, goalLoaded, loadGoal, setGoal, loadPlan } = useNutritionStore();
   const allHabits = useHabitsStore((s) => s.habits);
 
   const today = toDateString(new Date());
+  const plan = useNutritionStore((s) => s.plans[today]);
+
+  const [proteinMode, setProteinMode] = useState<'perKg' | 'manual'>('perKg');
+  const [proteinPerKg, setProteinPerKg] = useState(DEFAULT_PROTEIN_PER_KG);
+  const [phases, setPhases] = useState<PhaseDraft[]>([]);
 
   const [kcal, setKcal] = useState('');
   const [protein, setProtein] = useState('');
@@ -69,6 +99,7 @@ export function FoodGoalPage() {
 
   useEffect(() => {
     if (!goalLoaded) loadGoal();
+    if (!useNutritionStore.getState().plans[today]) loadPlan(today);
     fetchStats(today, today)
       .then((s) => {
         setWeights(s.weights);
@@ -76,7 +107,7 @@ export function FoodGoalPage() {
         if (w) setTodayWeight(String(w.weightKg));
       })
       .catch(() => {});
-  }, [goalLoaded, loadGoal, today]);
+  }, [goalLoaded, loadGoal, loadPlan, today]);
 
   useEffect(() => {
     if (!goal) return;
@@ -89,19 +120,64 @@ export function FoodGoalPage() {
     setTargetDate(goal.targetDate ?? '');
     setTrainingHabitId(goal.trainingHabitId);
     setSleepHabitId(goal.sleepHabitId);
+    if (goal.proteinPerKg != null) {
+      setProteinMode('perKg');
+      setProteinPerKg(goal.proteinPerKg);
+    } else {
+      setProteinMode(goal.protein != null ? 'manual' : 'perKg');
+    }
+    setPhases((goal.phases ?? []).map(toDraft));
   }, [goal]);
 
   const kcalNum = num(kcal);
   const valid = Number.isFinite(kcalNum) && kcalNum >= 500 && kcalNum <= 10000;
   const opt = (s: string) => (s.trim() && Number.isFinite(num(s)) ? num(s) : null);
 
+  const currentWeight = weights.length ? weights[weights.length - 1]!.weightKg : opt(startWeight);
+  // Protein per kg follows the smoothed trend, like the backend model does.
+  const proteinBaseKg = plan?.trendKg ?? plan?.weightKg ?? currentWeight;
+  const proteinGrams = (perKg: number) => (proteinBaseKg ? Math.round(proteinBaseKg * perKg) : null);
+
+  // Per-row problems that the server would reject (400) — shown inline, and they block saving.
+  const phaseIssues = new Map<number, string>();
+  for (const p of phases) {
+    if (!p.until) phaseIssues.set(p.key, 'Укажи дату окончания');
+    else if (phases.some((q) => q.key !== p.key && q.until === p.until)) phaseIssues.set(p.key, 'Другая фаза заканчивается в тот же день');
+    else if (p.type !== 'maintain' && opt(p.target) === null && opt(p.rate) === null) {
+      phaseIssues.set(p.key, p.by === 'weight' ? 'Укажи целевой вес' : 'Укажи темп');
+    }
+  }
+  const canSave = valid && phaseIssues.size === 0;
+
+  const phasesOut = (): GoalPhase[] =>
+    phases
+      .filter((p) => p.until)
+      .map((p): GoalPhase => {
+        const out: GoalPhase = { type: p.type, until: p.until };
+        if (p.type === 'maintain') return out;
+        if (p.by === 'weight') {
+          const t = opt(p.target);
+          if (t !== null) out.targetWeightKg = t;
+        } else {
+          const r = opt(p.rate);
+          // Signed: cut loses weight.
+          if (r !== null) out.rateKgPerWeek = p.type === 'cut' ? -Math.abs(r) : Math.abs(r);
+        }
+        return out;
+      })
+      .sort((a, b) => a.until.localeCompare(b.until));
+
   const save = async () => {
-    if (!valid || saving) return;
+    if (!canSave || saving) return;
     setSaving(true);
     try {
+      const perKg = proteinMode === 'perKg';
       await setGoal({
         kcal: kcalNum,
-        protein: opt(protein),
+        // Per-kg: the model computes grams from the weight trend, a stored snapshot would go stale.
+        protein: perKg ? null : opt(protein),
+        proteinPerKg: perKg ? proteinPerKg : null,
+        phases: phasesOut(),
         fat: opt(fat),
         carbs: opt(carbs),
         startWeightKg: opt(startWeight),
@@ -112,17 +188,16 @@ export function FoodGoalPage() {
       });
       haptic('success');
       back();
-    } catch {
+    } catch (e) {
       haptic('error');
+      toast(e instanceof Error && e.message ? e.message : 'Не удалось сохранить цель', { tone: 'error' });
     } finally {
       setSaving(false);
     }
   };
 
   useBackButton(back);
-  useMainButton(valid ? 'Сохранить цель' : null, save, { progress: saving });
-
-  const currentWeight = weights.length ? weights[weights.length - 1]!.weightKg : opt(startWeight);
+  useMainButton(canSave ? 'Сохранить цель' : null, save, { progress: saving });
 
   const runCalc = () => {
     const age = num(profile.age);
@@ -223,6 +298,40 @@ export function FoodGoalPage() {
           </div>
         </section>
 
+        {/* Phases */}
+        <section>
+          <h2 className="text-base font-semibold text-tg-text mb-1">Фазы</h2>
+          <p className="text-xs text-tg-hint mb-2">
+            {phases.length
+              ? 'Текущая фаза задаёт профицит или дефицит вместо цели по весу выше'
+              : 'Например, набор до 77 кг к марту, потом поддержание. Без фаз работает цель по весу'}
+          </p>
+          <PhaseTimeline phases={phases} today={today} />
+          <div className="flex flex-col gap-2">
+            {phases.map((p, i) => (
+              <PhaseRow
+                key={p.key}
+                index={i}
+                phase={p}
+                today={today}
+                issue={phaseIssues.get(p.key) ?? null}
+                onChange={(next) => setPhases((ps) => ps.map((x) => (x.key === p.key ? next : x)))}
+                onRemove={() => setPhases((ps) => ps.filter((x) => x.key !== p.key))}
+              />
+            ))}
+          </div>
+          <button
+            onClick={() => {
+              const type: PhaseType = phases.length ? 'maintain' : 'bulk';
+              setPhases((ps) => [...ps, { key: ++phaseKey, type, until: '', by: 'weight', target: '', rate: '' }]);
+            }}
+            className="w-full mt-2 py-2.5 rounded-xl text-sm font-semibold active:opacity-80"
+            style={{ backgroundColor: `${NUTRITION_COLOR}22`, color: NUTRITION_COLOR }}
+          >
+            + Добавить фазу
+          </button>
+        </section>
+
         {/* Calculator */}
         <section className="bg-tg-section rounded-2xl">
           <button onClick={() => setCalcOpen(!calcOpen)} className="w-full flex items-center justify-between px-4 py-3.5">
@@ -308,8 +417,36 @@ export function FoodGoalPage() {
         <section>
           <h2 className="text-base font-semibold text-tg-text mb-2">Норма на день</h2>
           <Num label="Калории, ккал" value={kcal} onChange={setKcal} />
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            <Num label="Белки, г" value={protein} onChange={setProtein} />
+
+          <div className="mt-3">
+            <div className="text-xs text-tg-hint mb-1.5 px-1">Белок</div>
+            <div className="flex flex-wrap gap-2">
+              {[...new Set([...PROTEIN_PER_KG_PRESETS, proteinPerKg])].sort((a, b) => a - b).map((v) => (
+                <Chip key={v} active={proteinMode === 'perKg' && proteinPerKg === v} onClick={() => { setProteinMode('perKg'); setProteinPerKg(v); }}>
+                  {fmt(v, 1)}
+                </Chip>
+              ))}
+              <Chip active={proteinMode === 'manual'} onClick={() => setProteinMode('manual')}>
+                вручную
+              </Chip>
+            </div>
+            {proteinMode === 'perKg' ? (
+              <p className="text-sm text-tg-text mt-2 px-1 tabular-nums">
+                {fmt(proteinPerKg, 1)} г на кг веса
+                {proteinGrams(proteinPerKg) !== null ? (
+                  <span className="text-tg-hint"> — сейчас {proteinGrams(proteinPerKg)} г ({fmt(proteinBaseKg!, 1)} кг)</span>
+                ) : (
+                  <span className="text-tg-hint"> — запиши вес, чтобы посчитать граммы</span>
+                )}
+              </p>
+            ) : (
+              <div className="mt-2">
+                <Num label="Белки, г" value={protein} onChange={setProtein} />
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-3">
             <Num label="Жиры, г" value={fat} onChange={setFat} />
             <Num label="Углеводы, г" value={carbs} onChange={setCarbs} />
           </div>
@@ -317,7 +454,7 @@ export function FoodGoalPage() {
 
         <button
           onClick={save}
-          disabled={!valid || saving}
+          disabled={!canSave || saving}
           className="w-full py-3 rounded-xl text-white font-semibold text-sm active:opacity-80 disabled:opacity-40"
           style={{ backgroundColor: NUTRITION_COLOR }}
         >
@@ -385,6 +522,124 @@ function HabitPicker({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function Chip({ active, onClick, children, color }: { active: boolean; onClick: () => void; children: ReactNode; color?: string }) {
+  const c = color ?? NUTRITION_COLOR;
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className="px-3 py-1.5 rounded-full text-sm font-medium tabular-nums min-h-[32px]"
+      style={active ? { backgroundColor: c, color: '#fff' } : { backgroundColor: 'var(--tg-theme-section-bg-color)', color: 'var(--tg-theme-text-color)' }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function PhaseRow({
+  index,
+  phase,
+  today,
+  issue,
+  onChange,
+  onRemove,
+}: {
+  index: number;
+  phase: PhaseDraft;
+  today: string;
+  issue: string | null;
+  onChange: (p: PhaseDraft) => void;
+  onRemove: () => void;
+}) {
+  const field = 'w-full px-3 py-2.5 rounded-xl bg-tg-secondary text-tg-text text-base outline-none placeholder:text-tg-hint';
+  const done = phase.until !== '' && phase.until < today;
+  return (
+    <div className="bg-tg-section rounded-2xl p-3 flex flex-col gap-2" style={{ opacity: done ? 0.6 : 1 }}>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-tg-hint w-4 tabular-nums">{index + 1}</span>
+        <div className="flex flex-wrap gap-1.5 flex-1">
+          {(Object.keys(PHASE_LABELS) as PhaseType[]).map((t) => (
+            <Chip key={t} active={phase.type === t} color={PHASE_COLORS[t]} onClick={() => onChange({ ...phase, type: t })}>
+              {PHASE_LABELS[t]}
+            </Chip>
+          ))}
+        </div>
+        <button onClick={onRemove} aria-label="Удалить фазу" className="hit-44 text-tg-hint text-sm px-1">
+          ✕
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-tg-hint w-6 shrink-0">до</span>
+        <input type="date" value={phase.until} onChange={(e) => onChange({ ...phase, until: e.target.value })} className={field} />
+      </div>
+      {done && <p className="text-xs text-tg-hint">Фаза завершена</p>}
+      {phase.type !== 'maintain' && (
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1.5 shrink-0">
+            <Chip active={phase.by === 'weight'} onClick={() => onChange({ ...phase, by: 'weight' })}>
+              к весу
+            </Chip>
+            <Chip active={phase.by === 'rate'} onClick={() => onChange({ ...phase, by: 'rate' })}>
+              темп
+            </Chip>
+          </div>
+          <input
+            value={phase.by === 'weight' ? phase.target : phase.rate}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^\d.,]/g, '');
+              onChange(phase.by === 'weight' ? { ...phase, target: v } : { ...phase, rate: v });
+            }}
+            inputMode="decimal"
+            placeholder={phase.by === 'weight' ? 'кг' : 'кг/нед'}
+            className={field}
+          />
+        </div>
+      )}
+      {issue && (
+        <p className="text-xs" style={{ color: 'var(--over)' }}>
+          {issue}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function PhaseTimeline({ phases, today }: { phases: PhaseDraft[]; today: string }) {
+  const t = phaseTimeline(phases, today);
+  if (!t || t.segments.length === 0) return null;
+  const end = t.segments[t.segments.length - 1]!.until;
+  return (
+    <div className="mb-3 pt-1" aria-hidden>
+      <div className="relative">
+        <div className="relative h-3 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--empty-cell)' }}>
+          {t.segments.map((s, i) => (
+            <div
+              key={i}
+              className="absolute inset-y-0"
+              style={{
+                left: `${s.left * 100}%`,
+                width: `${s.width * 100}%`,
+                backgroundColor: PHASE_COLORS[s.type],
+                borderLeft: i > 0 ? '2px solid var(--tg-theme-secondary-bg-color)' : undefined,
+              }}
+            />
+          ))}
+        </div>
+        {/* «сейчас» marker */}
+        <div className="absolute -top-1 -bottom-1 w-0.5 rounded-full bg-tg-text" style={{ left: `calc(${t.now * 100}% - 1px)` }} />
+      </div>
+      <div className="relative h-4 mt-1.5 text-[11px] leading-none">
+        <span className="absolute top-0 -translate-x-1/2 text-tg-text font-medium" style={{ left: `${Math.max(6, Math.min(80, t.now * 100))}%` }}>
+          сейчас
+        </span>
+        <span className="absolute right-0 top-0 text-tg-hint tabular-nums">
+          {format(parseISO(end), 'd MMM yyyy', { locale: ru })}
+        </span>
+      </div>
     </div>
   );
 }

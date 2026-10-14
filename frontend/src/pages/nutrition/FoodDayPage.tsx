@@ -25,11 +25,12 @@ import { PortionSheet, type PortionTarget } from '../../components/nutrition/Por
 import { FoodCalendarSheet } from '../../components/nutrition/FoodCalendarSheet';
 import { WeightSheet } from '../../components/nutrition/WeightSheet';
 import { InsightsCard } from '../../components/nutrition/InsightsCard';
+import { ON_TRACK_COLORS, ON_TRACK_LABELS, phaseLine } from '../../utils/phases';
 import { SaveTemplateSheet } from '../../components/nutrition/SaveTemplateSheet';
 import { TemplatesHint, markTemplatesHintSeen } from '../../components/nutrition/TemplatesHint';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { capitalizeFirst, shiftDate, toDateString } from '../../utils/dates';
-import { MEALS, fmt, formatDayTitle, mealByTime, mealLabel, sumMacros } from '../../utils/nutrition';
+import { MEALS, fallbackProtein, fmt, formatDayTitle, mealByTime, mealLabel, sumMacros } from '../../utils/nutrition';
 import { fetchFrequent, type FrequentFood } from '../../api/nutrition';
 import { toast } from '../../stores/toastStore';
 import type { FoodLogEntry, Meal, NutritionGoal } from '../../types';
@@ -116,7 +117,7 @@ export function FoodDayPage() {
     return {
       ...day.goal,
       kcal: plan?.todayKcal ?? day.goal.kcal,
-      protein: plan?.proteinTarget ?? day.goal.protein,
+      protein: plan?.proteinTarget ?? fallbackProtein(day.goal),
     };
   }, [day?.goal, plan]);
 
@@ -255,6 +256,22 @@ export function FoodDayPage() {
                 </span>
               )}
             </p>
+          )}
+
+          {/* Current goal phase: pace vs plan, dot coloured by on-track state */}
+          {plan?.phase && (
+            <button
+              onClick={() => navigate('food-goal')}
+              className="w-full text-left text-sm text-tg-text mt-1.5 flex items-center gap-2 tabular-nums active:opacity-70"
+            >
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: plan.phase.onTrack ? ON_TRACK_COLORS[plan.phase.onTrack] : 'var(--tg-theme-hint-color)' }}
+                aria-hidden
+              />
+              <span className="min-w-0">{phaseLine(plan.phase)}</span>
+              {plan.phase.onTrack && <span className="sr-only">{ON_TRACK_LABELS[plan.phase.onTrack]}</span>}
+            </button>
           )}
 
           <div className="flex gap-2 mt-3">

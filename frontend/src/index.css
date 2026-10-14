@@ -30,7 +30,7 @@
   --switch-off: color-mix(in srgb, var(--tg-theme-text-color, #000000) 45%, transparent);
 }
 
-/* Telegram dark theme (set from WebApp.colorScheme in main.tsx). */
+/* Dark scheme: Telegram's own or the forced «Тёмная» theme (utils/appearance.ts). */
 :root[data-scheme='dark'] {
   --accent: #3fb58a;
   --protein: #e0668e;

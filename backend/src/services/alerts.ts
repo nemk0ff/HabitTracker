@@ -7,6 +7,7 @@ import {
   getTopEvents,
   getWau,
 } from './analytics.js';
+import { computePlan } from './nutrition/model.js';
 
 const DEVELOPER_CHAT_ID = process.env.DEVELOPER_CHAT_ID || '';
 
@@ -34,7 +35,9 @@ async function developerNutritionLine(day: Date): Promise<string | null> {
   if (sum._count === 0) return null;
   const kcal = Math.round(sum._sum.kcal ?? 0);
   const protein = Math.round(sum._sum.protein ?? 0);
-  return `🥗 Питание: <b>${kcal}</b>${goal ? ` / ${goal.kcal}` : ''} ккал · Б ${protein}${goal?.protein ? ` / ${goal.protein}` : ''} г`;
+  // Protein target comes from the model (per-kg goals follow the weight trend; goal.protein may be null/stale).
+  const proteinTarget = goal ? (await computePlan(dev.id, day.toISOString().slice(0, 10))).proteinTarget : null;
+  return `🥗 Питание: <b>${kcal}</b>${goal ? ` / ${goal.kcal}` : ''} ккал · Б ${protein}${proteinTarget ? ` / ${proteinTarget}` : ''} г`;
 }
 
 export async function sendDailyReport(): Promise<void> {

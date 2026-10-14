@@ -5,7 +5,7 @@ import { useNutritionStore } from '../../stores/nutritionStore';
 import { PortionSheet, type PortionTarget } from '../../components/nutrition/PortionSheet';
 import { FavoriteStar } from '../../components/nutrition/FavoriteStar';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
-import { NUTRITION_COLOR, MACRO_COLORS, fmt, mealByTime } from '../../utils/nutrition';
+import { NUTRITION_COLOR, MACRO_COLORS, fallbackProtein, fmt, mealByTime } from '../../utils/nutrition';
 import { toDateString } from '../../utils/dates';
 import { DONE_KCAL, bestCombo, remainingOf, suggest, type Suggestion } from '../../utils/suggest';
 
@@ -34,7 +34,7 @@ export function FoodSuggestPage() {
     return remainingOf(
       {
         kcal: plan?.todayKcal ?? day.goal.kcal,
-        protein: plan?.proteinTarget ?? day.goal.protein ?? undefined,
+        protein: plan?.proteinTarget ?? fallbackProtein(day.goal) ?? undefined,
         fat: day.goal.fat ?? undefined,
         carbs: day.goal.carbs ?? undefined,
       },

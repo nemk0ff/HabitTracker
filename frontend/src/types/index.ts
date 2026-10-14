@@ -122,6 +122,10 @@ export interface NutritionGoal {
   targetDate: string | null;
   trainingHabitId: number | null;
   sleepHabitId: number | null;
+  /** Protein target as g per kg of the weight trend; null = manual `protein` (or 1.8 g/kg default). */
+  proteinPerKg: number | null;
+  /** Ordered phases; the current one drives the kcal delta. Empty/null = old targetWeightKg/targetDate logic. */
+  phases: GoalPhase[] | null;
 }
 
 export interface FoodDay {
@@ -174,6 +178,8 @@ export interface Plan {
   trainingsPerWeek: number | null;
   sleepLastNightH: number | null;
   sleepAvg7H: number | null;
+  /** Current phase of the goal, null when no phases are set. */
+  phase: PlanPhase | null;
   insights: Insight[];
 }
 
@@ -185,4 +191,25 @@ export interface MealTemplate {
   meal: Meal | null;
   items: { foodId: number; name: string; grams: number; kcal: number }[];
   totals: { kcal: number; protein: number; fat: number; carbs: number };
+}
+
+export type PhaseType = 'bulk' | 'cut' | 'maintain';
+
+export interface GoalPhase {
+  type: PhaseType;
+  /** Last day of the phase, local YYYY-MM-DD. */
+  until: string;
+  targetWeightKg?: number;
+  rateKgPerWeek?: number;
+}
+
+export interface PlanPhase {
+  type: PhaseType;
+  /** «Набор до 77 кг», «Поддержание». */
+  label: string;
+  until: string;
+  daysLeft: number;
+  plannedRateKgWeek: number | null;
+  actualRateKgWeek: number | null;
+  onTrack: 'ahead' | 'on' | 'behind' | null;
 }
