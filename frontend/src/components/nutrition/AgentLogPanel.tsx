@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { getTextLog, startTextLog, undoTextLog, type TextLogJob } from '../../api/nutrition';
+import { getTextLog, startTextLog, undoTextLog, type TextLogHabit, type TextLogJob, type TextLogResult } from '../../api/nutrition';
 import { useNutritionStore } from '../../stores/nutritionStore';
+import { useHabitsStore } from '../../stores/habitsStore';
 import { haptic } from '../../hooks/useTelegramButtons';
 import { NUTRITION_COLOR, fmt, mealLabel } from '../../utils/nutrition';
 import type { Meal } from '../../types';
@@ -12,15 +13,40 @@ interface Props {
 }
 
 const POLL_MS = 3000;
+const FIRST_POLL_MS = 600; // offline-parsed messages («вес 70,5») finish at once
 const MAX_WAIT_MS = 12 * 60_000; // server-side agent timeout is 10 min
 
+const hours = (minutes: number) => fmt(minutes / 60, 1);
+
+function habitLine(h: TextLogHabit): string {
+  const name = `${h.icon ? `${h.icon} ` : ''}${h.name}`;
+  if (h.action === 'skip') return `⏭ ${name} — пропуск`;
+  if (h.action === 'undone') return `◻️ ${name} — отметка снята`;
+  const value = h.value === null ? '' : h.measure === 'hours' ? ` — ${hours(h.value)} ч` : ` — ${h.value}`;
+  return `✅ ${name}${value}`;
+}
+
+/** Weight / sleep / habits lines of the result. */
+function otherLines(r: TextLogResult): string[] {
+  const lines: string[] = [];
+  if (r.weight) lines.push(`⚖️ ${fmt(r.weight.kg, 1)} кг`);
+  if (r.sleep) {
+    lines.push(
+      r.sleep.bed && r.sleep.wake ? `😴 ${r.sleep.bed}–${r.sleep.wake} · ${hours(r.sleep.minutes)} ч` : `😴 ${hours(r.sleep.minutes)} ч`,
+    );
+  }
+  for (const h of r.habits ?? []) lines.push(habitLine(h));
+  return lines;
+}
+
 /**
- * "Добавить текстом" via the developer's Hermes agent: the server runs it as a
- * background job (minutes), this panel polls it. Results are written right away;
- * "Отменить" removes the entries and any products the agent created.
+ * "Добавить текстом" via the developer's Hermes agent (the assistant): the server runs it as a
+ * background job (minutes), this panel polls it. One message can log food, weight, sleep and
+ * habits or ask a question; results are written right away and "Отменить" restores everything.
  */
 export function AgentLogPanel({ date, meal, onDone }: Props) {
   const loadDay = useNutritionStore((s) => s.loadDay);
+  const loadHabits = useHabitsStore((s) => s.load);
   const [text, setText] = useState('');
   const [job, setJob] = useState<TextLogJob | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +57,12 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
     if (pollRef.current) clearTimeout(pollRef.current);
   }, []);
 
-  const poll = (id: string, startedAt: number) => {
+  const refresh = (r: TextLogResult | null) => {
+    loadDay(date);
+    if (r && (r.habits?.length || r.sleep)) void loadHabits();
+  };
+
+  const poll = (id: string, startedAt: number, delay = POLL_MS) => {
     pollRef.current = setTimeout(async () => {
       try {
         const j = await getTextLog(id);
@@ -43,14 +74,14 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
         }
         if (j.status === 'done') {
           haptic('success');
-          loadDay(date);
+          refresh(j.result);
         } else {
           haptic('error');
         }
       } catch (e: any) {
         setError(e.message || 'Связь с сервером потеряна');
       }
-    }, POLL_MS);
+    }, delay);
   };
 
   const submit = async () => {
@@ -61,7 +92,7 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
     try {
       const j = await startTextLog(t, date, meal);
       setJob(j);
-      poll(j.id, Date.now());
+      poll(j.id, Date.now(), FIRST_POLL_MS);
     } catch (e: any) {
       setError(e.message || 'Не удалось отправить');
     }
@@ -73,7 +104,7 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
       await undoTextLog(job.id);
       setUndone(true);
       haptic('medium');
-      loadDay(date);
+      refresh(job.result);
     } catch (e: any) {
       setError(e.message || 'Не удалось отменить');
     }
@@ -88,7 +119,7 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
         value={text}
         onChange={(e) => setText(e.target.value)}
         disabled={running}
-        placeholder="Что съел, где и сколько. Например: «удон с курицей из Лавки и 2 мандарина» или «бургер в Вкусно и точка, картошка фри большая»"
+        placeholder="Что съел, где и сколько — и заодно вес, сон, привычки или вопрос. Например: «удон с курицей из Лавки, вес 70,5, спал с 1:30 до 8, зарядка сделана»"
         rows={4}
         className="w-full px-4 py-3 rounded-xl bg-tg-section text-tg-text text-base outline-none resize-none placeholder:text-tg-hint disabled:opacity-60"
       />
@@ -98,12 +129,12 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
         className="w-full mt-2 py-3 rounded-xl text-white font-semibold text-sm active:opacity-80 disabled:opacity-40"
         style={{ backgroundColor: NUTRITION_COLOR }}
       >
-        {running ? 'Агент ищет КБЖУ…' : `Записать в ${mealLabel(meal).toLowerCase()}`}
+        {running ? 'Агент думает…' : `Записать (еда — в ${mealLabel(meal).toLowerCase()})`}
       </button>
 
       {running && (
         <p className="text-xs text-tg-hint text-center mt-3">
-          Обычно 2–5 минут. Экран можно закрыть — еда запишется сама
+          Обычно 2–5 минут. Экран можно закрыть — всё запишется само
         </p>
       )}
 
@@ -113,53 +144,75 @@ export function AgentLogPanel({ date, meal, onDone }: Props) {
 
       {result && (
         <div className="mt-4 bg-tg-section rounded-2xl p-4">
-          <div className="text-sm font-semibold text-tg-text mb-2">
-            {undone ? '↩️ Отменено' : `✅ Записано в ${mealLabel(result.meal).toLowerCase()}`}
-          </div>
-          <div className={`flex flex-col gap-2 ${undone ? 'opacity-40 line-through' : ''}`}>
-            {result.items.map((i) => (
-              <div key={i.entryId} className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm text-tg-text">
-                    {i.name}
-                    <span
-                      className="ml-1.5 text-xs font-semibold px-1.5 py-0.5 rounded-full align-middle"
-                      style={
-                        i.status === 'new'
-                          ? { backgroundColor: `${NUTRITION_COLOR}22`, color: NUTRITION_COLOR }
-                          : { backgroundColor: 'rgba(76,175,80,0.15)', color: '#4CAF50' }
-                      }
-                    >
-                      {i.status === 'new' ? 'новый в базе' : 'из базы'}
-                    </span>
-                  </div>
-                  <div className="text-xs text-tg-hint">
-                    {i.brand ? `${i.brand} · ` : ''}
-                    {fmt(i.grams)} г · Б {fmt(i.protein, 1)} · Ж {fmt(i.fat, 1)} · У {fmt(i.carbs, 1)}
-                  </div>
-                </div>
-                <span className="text-sm font-medium text-tg-text shrink-0">{fmt(i.kcal)}</span>
+          {result.agentError && (
+            <div className="text-xs text-tg-destructive mb-2">⚠️ Агент сейчас недоступен —{' '}
+              {result.items.length || result.weight || result.sleep || result.habits?.length
+                ? 'записал только то, что понял'
+                : 'вот факты из базы'}
+            </div>
+          )}
+          {undone && <div className="text-sm font-semibold text-tg-text mb-2">↩️ Отменено — всё вернул как было</div>}
+          {result.items.length > 0 && (
+            <>
+              <div className="text-sm font-semibold text-tg-text mb-2">
+                {undone ? '🍽 Еда' : `🍽 Записано в ${mealLabel(result.meal).toLowerCase()}`}
               </div>
-            ))}
-          </div>
-          <div className="text-xs text-tg-hint mt-3">
-            Итого {fmt(result.totals.kcal)} ккал · Б {fmt(result.totals.protein)} · Ж {fmt(result.totals.fat)} · У{' '}
-            {fmt(result.totals.carbs)}
-          </div>
-          {result.skipped.map((s) => (
+              <div className={`flex flex-col gap-2 ${undone ? 'opacity-40 line-through' : ''}`}>
+                {result.items.map((i) => (
+                  <div key={i.entryId} className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm text-tg-text">
+                        {i.name}
+                        <span
+                          className="ml-1.5 text-xs font-semibold px-1.5 py-0.5 rounded-full align-middle"
+                          style={
+                            i.status === 'new'
+                              ? { backgroundColor: `${NUTRITION_COLOR}22`, color: NUTRITION_COLOR }
+                              : { backgroundColor: 'rgba(76,175,80,0.15)', color: '#4CAF50' }
+                          }
+                        >
+                          {i.status === 'new' ? 'новый в базе' : 'из базы'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-tg-hint">
+                        {i.brand ? `${i.brand} · ` : ''}
+                        {fmt(i.grams)} г · Б {fmt(i.protein, 1)} · Ж {fmt(i.fat, 1)} · У {fmt(i.carbs, 1)}
+                      </div>
+                    </div>
+                    <span className="text-sm font-medium text-tg-text shrink-0">{fmt(i.kcal)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-xs text-tg-hint mt-3">
+                Итого {fmt(result.totals.kcal)} ккал · Б {fmt(result.totals.protein)} · Ж {fmt(result.totals.fat)} · У{' '}
+                {fmt(result.totals.carbs)}
+              </div>
+            </>
+          )}
+          {otherLines(result).length > 0 && (
+            <div className={`flex flex-col gap-1 text-sm text-tg-text ${result.items.length ? 'mt-3' : ''} ${undone ? 'opacity-40 line-through' : ''}`}>
+              {otherLines(result).map((l) => (
+                <div key={l}>{l}</div>
+              ))}
+            </div>
+          )}
+          {[...result.skipped, ...(result.notes ?? [])].map((s) => (
             <div key={s} className="text-xs text-tg-destructive mt-1">
               ⚠️ {s}
             </div>
           ))}
+          {result.answer && <div className="text-sm text-tg-text mt-3 whitespace-pre-line">💬 {result.answer}</div>}
 
           {!undone && (
             <div className="flex gap-2 mt-4">
-              <button
-                onClick={undo}
-                className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-tg-secondary text-tg-text active:opacity-70"
-              >
-                ↩️ Отменить
-              </button>
+              {job?.canUndo !== false && (
+                <button
+                  onClick={undo}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-tg-secondary text-tg-text active:opacity-70"
+                >
+                  ↩️ Отменить
+                </button>
+              )}
               <button
                 onClick={onDone}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white active:opacity-80"

@@ -4,6 +4,7 @@ import { authGuard, JwtPayload } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
 import { isValidTzOffset } from '../utils/safe.js';
 import { sendToUser } from '../services/messaging.js';
+import { MORNING_OFF } from '../services/checkin.js';
 
 /** Local 'HH:MM', 00:00–23:59. */
 const CHECKIN_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -33,12 +34,14 @@ export async function meRoutes(app: FastifyInstance) {
     if (checkinTime !== undefined && checkinTime !== null && !(typeof checkinTime === 'string' && CHECKIN_RE.test(checkinTime))) {
       return reply.status(400).send({ error: 'Invalid checkinTime. Use HH:MM (00:00–23:59) or null' });
     }
+    // Morning: HH:MM, null = default 09:00, 'off' = disabled (see services/checkin.ts morningTimeOf).
     if (
       morningCheckinTime !== undefined &&
       morningCheckinTime !== null &&
+      morningCheckinTime !== MORNING_OFF &&
       !(typeof morningCheckinTime === 'string' && CHECKIN_RE.test(morningCheckinTime))
     ) {
-      return reply.status(400).send({ error: 'Invalid morningCheckinTime. Use HH:MM (00:00–23:59) or null' });
+      return reply.status(400).send({ error: `Invalid morningCheckinTime. Use HH:MM (00:00–23:59), null (default 09:00) or '${MORNING_OFF}'` });
     }
     if (tzOffset !== undefined && !isValidTzOffset(tzOffset)) {
       return reply.status(400).send({ error: 'Invalid tzOffset. Integer minutes in −840..840' });
@@ -61,7 +64,7 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     if (morningCheckinTime !== undefined) {
-      track({ userId, event: 'morning_checkin_time_set', category: 'miniapp', label: morningCheckinTime ?? 'off' });
+      track({ userId, event: 'morning_checkin_time_set', category: 'miniapp', label: morningCheckinTime ?? 'default' });
     }
 
     return { ok: true };

@@ -151,17 +151,39 @@ export interface TextLogItem {
   status: 'existing' | 'new';
 }
 
+export interface TextLogHabit {
+  habitId: number;
+  name: string;
+  icon: string | null;
+  action: 'done' | 'undone' | 'skip';
+  /** Count, minutes (hours habits) or level; null for a plain mark. */
+  value: number | null;
+  measure: string | null;
+}
+
+/** One assistant message: food (as before) plus weight / sleep / habits / an answer. */
+export interface TextLogResult {
+  today: string;
+  date: string;
+  meal: Meal;
+  items: TextLogItem[];
+  totals: { kcal: number; protein: number; fat: number; carbs: number };
+  skipped: string[];
+  weight: { kg: number; date: string } | null;
+  sleep: { date: string; bed: string | null; wake: string | null; minutes: number } | null;
+  habits: TextLogHabit[];
+  answer: string | null;
+  notes: string[];
+  /** Set when the agent was offline and only the simple parts were written. */
+  agentError: string | null;
+}
+
 export interface TextLogJob {
   id: string;
   status: 'running' | 'done' | 'error' | 'undone';
-  result: {
-    date: string;
-    meal: Meal;
-    items: TextLogItem[];
-    totals: { kcal: number; protein: number; fat: number; carbs: number };
-    skipped: string[];
-  } | null;
+  result: TextLogResult | null;
   error: string | null;
+  canUndo?: boolean;
 }
 
 /** Starts a background agent job; poll it with getTextLog. */

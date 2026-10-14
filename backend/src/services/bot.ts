@@ -152,18 +152,18 @@ bot.callbackQuery(/^(ci|cd):/, async (ctx) => {
   }
 });
 
-/** "↩️ Отменить" under a text-log result: removes the entries (and products) it created. */
+/** "↩️ Отменить" under an assistant reply: restores everything that message wrote (food, weight, sleep, habits). */
 bot.callbackQuery(/^tlu:(.+)$/, async (ctx) => {
   try {
     const userId = await resolveUserId(ctx.from.id);
-    const { undoJob } = await import('./nutrition/textLog.js');
+    const { undoJob } = await import('./assistant.js');
     const ok = userId !== null && (await undoJob(userId, ctx.match[1]!));
     await ctx.answerCallbackQuery(ok ? 'Отменено' : 'Нечего отменять');
     if (ok) {
       const text = ctx.callbackQuery.message && 'text' in ctx.callbackQuery.message ? ctx.callbackQuery.message.text : '';
       await ctx.editMessageText(`${text}
 
-↩️ Отменено — записи удалены`).catch(() => {});
+↩️ Отменено — всё вернул как было`).catch(() => {});
     }
   } catch (e) {
     console.error(`[bot] text-log undo failed (from ${ctx.from.id}):`, e);
@@ -181,38 +181,55 @@ bot.on('message', async (ctx) => {
     label: text?.slice(0, 80) ?? undefined,
   });
 
-  // The owner's plain text = "что я съел" → Hermes agent → diary.
+  // The owner's plain text → the assistant (food / weight / sleep / habits / a question).
   if (text && !text.startsWith('/') && userId !== null) {
-    const status = await ctx.reply('⏳ Передал агенту — обычно это 2–5 минут…');
     // Not awaited: the agent can take minutes and grammY handles updates sequentially,
     // so waiting here would stall every other update.
-    void logFoodFromChat(ctx.chat.id, status.message_id, userId, text);
+    void assistantFromChat(ctx.chat.id, userId, text);
     return;
   }
 
   await ctx.reply('Открой трекер, чтобы управлять привычками 👇', openTrackerOptions());
 });
 
-async function logFoodFromChat(chatId: number, messageId: number, userId: number, text: string) {
+/** Offline-parsed messages finish at once; only a real agent call gets the "⏳" status message. */
+const QUICK_MS = 1500;
+
+async function assistantFromChat(chatId: number, userId: number, text: string) {
+  let statusId: number | null = null;
+  const show = async (body: string, extra: Parameters<typeof bot.api.sendMessage>[2] = {}) => {
+    if (statusId !== null) {
+      try {
+        await bot.api.editMessageText(chatId, statusId, body, extra as Parameters<typeof bot.api.editMessageText>[3]);
+        return;
+      } catch {
+        // fall through to a fresh message
+      }
+    }
+    await bot.api.sendMessage(chatId, body, extra);
+  };
   try {
-    const { startTextLog, waitForJob, formatResult } = await import('./nutrition/textLog.js');
-    const job = await waitForJob(startTextLog(userId, text));
+    const { startAssistant, waitForJob, formatAssistantResult, jobView } = await import('./assistant.js');
+    const job = startAssistant(userId, text);
+    await waitForJob(job, QUICK_MS);
+    if (job.status === 'running') {
+      statusId = (await bot.api.sendMessage(chatId, '⏳ Передал агенту — обычно это 2–5 минут…')).message_id;
+      await waitForJob(job);
+    }
     if (job.status === 'done' && job.result) {
-      await bot.api.editMessageText(chatId, messageId, formatResult(job.result), {
-        reply_markup: { inline_keyboard: [[{ text: '↩️ Отменить', callback_data: `tlu:${job.id}` }]] },
-      });
+      await show(
+        formatAssistantResult(job.result),
+        jobView(job).canUndo ? { reply_markup: { inline_keyboard: [[{ text: '↩️ Отменить', callback_data: `tlu:${job.id}` }]] } } : {},
+      );
     } else {
-      await bot.api.editMessageText(chatId, messageId, `❌ ${job.error ?? 'Не получилось записать'}`);
+      await show(`❌ ${job.error ?? 'Не получилось записать'}`);
     }
   } catch (e) {
-    console.error(`[bot] food log failed (user ${userId}):`, e);
+    console.error(`[bot] assistant failed (user ${userId}):`, e);
     // Never leave the "⏳" status hanging: replace it, or send a fresh message if editing fails.
-    const errorText = '❌ Не получилось записать — попробуй ещё раз или добавь в трекере';
-    try {
-      await bot.api.editMessageText(chatId, messageId, errorText);
-    } catch {
-      await bot.api.sendMessage(chatId, errorText).catch((err) => console.error('[bot] food log error notice failed:', err));
-    }
+    await show('❌ Не получилось записать — попробуй ещё раз или добавь в трекере').catch((err) =>
+      console.error('[bot] assistant error notice failed:', err),
+    );
   }
 }
 

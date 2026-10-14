@@ -5,6 +5,9 @@ export interface HabitEntry {
   value: number;
   /** A deliberate pass (ill / vacation): not done, but it does not break the streak. */
   skipped?: boolean;
+  /** Sleep (hours habits): local bed / wake time "HH:MM"; the night belongs to the wake date. */
+  startTime?: string | null;
+  endTime?: string | null;
 }
 
 export type TimeOfDay = 'morning' | 'day' | 'evening';
@@ -41,7 +44,10 @@ export interface User {
   username: string | null;
   /** Evening check-in time, local HH:MM; null = no check-in message. */
   checkinTime?: string | null;
-  /** Optional second check-in in the morning with morning habits only (local HH:MM). */
+  /**
+   * Morning briefing time: local 'HH:MM', 'off' (MORNING_OFF in utils/checkin.ts) = disabled,
+   * null = the default 09:00 (the briefing is on by default).
+   */
   morningCheckinTime?: string | null;
   /** Whether the bot can message this user (Telegram write access). null = unknown. */
   canMessage?: boolean | null;

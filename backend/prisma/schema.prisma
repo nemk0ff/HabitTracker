@@ -112,6 +112,9 @@ model HabitEntry {
   value     Int      @default(1)
   /// Day off (sick / vacation): value is 0, not done, and transparent for streaks.
   skipped   Boolean  @default(false)
+  /// Sleep (hours habits): local bed / wake time "HH:MM"; value = minutes between them. The night belongs to the wake date.
+  startTime String?
+  endTime   String?
   createdAt DateTime @default(now())
 
   @@unique([habitId, date])

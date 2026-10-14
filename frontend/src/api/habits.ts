@@ -63,19 +63,32 @@ export function deleteHabit(id: number): Promise<void> {
   return api(`/api/habits/${id}`, { method: 'DELETE' });
 }
 
+/** Sleep night (hours habits): bed / wake "HH:MM"; the server derives `value` from them. */
+export interface EntryTimes {
+  startTime: string;
+  endTime: string;
+}
+
 /**
  * Upserts a day: `value > 0` marks (and clears a skip), `value 0` deletes,
  * `skipped: true` (with value 0) stores a pass that keeps the streak (overrides a mark).
+ * `times` (hours habits) sends bed / wake instead of the value; a plain value clears them.
  */
 export function toggleEntry(
   habitId: number,
   date: string,
   value: number,
   skipped = false,
+  times?: EntryTimes | null,
 ): Promise<HabitEntry | { deleted: boolean; date: string }> {
+  const body = skipped
+    ? { date, value: 0, skipped: true }
+    : times && value > 0
+      ? { date, startTime: times.startTime, endTime: times.endTime }
+      : { date, value };
   return api(`/api/habits/${habitId}/entries`, {
     method: 'POST',
-    body: JSON.stringify(skipped ? { date, value: 0, skipped: true } : { date, value }),
+    body: JSON.stringify(body),
   });
 }
 

@@ -6,7 +6,14 @@ import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import { loadAppearance, setAppearance, type Appearance } from '../utils/appearance';
-import { CHECKIN_PRESETS, MORNING_CHECKIN_PRESETS, saveCheckinTime, saveMorningCheckinTime } from '../utils/checkin';
+import {
+  CHECKIN_PRESETS,
+  DEFAULT_MORNING_TIME,
+  MORNING_CHECKIN_PRESETS,
+  MORNING_OFF,
+  saveCheckinTime,
+  saveMorningCheckinTime,
+} from '../utils/checkin';
 
 /** User settings: the evening check-in and (with morning habits) the morning one. */
 export function SettingsPage() {
@@ -14,6 +21,8 @@ export function SettingsPage() {
   const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
   const morningTime = useAuthStore((s) => s.user?.morningCheckinTime ?? null);
   const hasMorningHabits = useHabitsStore((s) => s.habits.some((h) => !h.archived && h.timeOfDay === 'morning'));
+  // Sleep (an hours habit) is asked in the morning too: «Во сколько лёг и встал?».
+  const hasSleep = useHabitsStore((s) => s.habits.some((h) => !h.archived && h.measure === 'hours'));
 
   useBackButton(back);
   useMainButton(null, () => {});
@@ -42,19 +51,26 @@ export function SettingsPage() {
           save={saveCheckinTime}
         />
 
-        {/* Second message only makes sense when there's something to do in the morning. */}
-        {(hasMorningHabits || morningTime !== null) && (
-          <div className="mt-8">
-            <TimeSection
-              title="Утренняя сводка"
-              hint="Только утренние привычки; вечером их уже не будет"
-              icon={<Sunrise size={16} className="shrink-0 mt-0.5" aria-hidden />}
-              presets={MORNING_CHECKIN_PRESETS}
-              value={morningTime}
-              save={saveMorningCheckinTime}
-            />
-          </div>
-        )}
+        {/* The morning briefing is on by default (null = 09:00); «Выключить» stores 'off'. */}
+        <div className="mt-8">
+          <TimeSection
+            title="Утренняя сводка"
+            hint={
+              hasSleep
+                ? 'Итоги вчера и план на сегодня; спросит, во сколько лёг и встал (кнопки по твоему обычному режиму), и вес' +
+                  (hasMorningHabits ? '; плюс утренние привычки — вечером их уже не будет' : '')
+                : hasMorningHabits
+                  ? 'Итоги вчера и план на сегодня; плюс утренние привычки — вечером их уже не будет'
+                  : 'Итоги вчера и план на сегодня'
+            }
+            icon={<Sunrise size={16} className="shrink-0 mt-0.5" aria-hidden />}
+            presets={MORNING_CHECKIN_PRESETS}
+            value={morningTime}
+            save={saveMorningCheckinTime}
+            offValue={MORNING_OFF}
+            defaultTime={DEFAULT_MORNING_TIME}
+          />
+        </div>
       </div>
     </motion.div>
   );
@@ -139,6 +155,8 @@ function TimeSection({
   presets,
   value,
   save,
+  offValue = null,
+  defaultTime,
 }: {
   title: string;
   hint: string;
@@ -146,17 +164,25 @@ function TimeSection({
   presets: readonly string[];
   value: string | null;
   save: (time: string | null) => Promise<boolean>;
+  /** Stored value meaning «off» (null for the evening check-in, 'off' for the morning one). */
+  offValue?: string | null;
+  /** Time a null value means (shown as «HH:MM (по умолчанию)»); unset = null is off. */
+  defaultTime?: string;
 }) {
-  // undefined = idle; otherwise the option being saved (null = «Выключить»).
+  // undefined = idle; otherwise the option being saved (offValue = «Выключить»).
   const [saving, setSaving] = useState<string | null | undefined>(undefined);
+  const isOff = value === offValue;
+  // The time actually in effect (null with a default → the default).
+  const effective = isOff ? null : (value ?? defaultTime ?? null);
+  const isDefault = value === null && !!defaultTime;
 
   // A non-preset time (set elsewhere) is still shown as an option so it stays selectable.
   const options: string[] = [...presets];
-  if (value && !options.includes(value)) options.push(value);
+  if (effective && !options.includes(effective)) options.push(effective);
   options.sort();
 
   const select = async (time: string | null) => {
-    if (saving !== undefined || time === value) return;
+    if (saving !== undefined || time === value || (time !== offValue && time === effective)) return;
     haptic('select');
     setSaving(time);
     await save(time);
@@ -173,11 +199,14 @@ function TimeSection({
 
       <div className="flex flex-col gap-2" role="radiogroup" aria-label={title}>
         {options.map((time) => (
-          <Option key={time} selected={value === time} busy={saving === time} onSelect={() => select(time)}>
-            <span className="text-lg font-medium tabular-nums">{time}</span>
+          <Option key={time} selected={effective === time} busy={saving === time} onSelect={() => select(time)}>
+            <span className="text-lg font-medium tabular-nums">
+              {time}
+              {isDefault && time === defaultTime && <span className="text-sm font-normal text-tg-hint"> (по умолчанию)</span>}
+            </span>
           </Option>
         ))}
-        <Option selected={value === null} busy={saving === null} onSelect={() => select(null)}>
+        <Option selected={isOff} busy={saving === offValue} onSelect={() => select(offValue)}>
           <span className="flex items-center gap-2 text-base">
             <BellOff size={18} aria-hidden /> Выключить
           </span>

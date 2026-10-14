@@ -15,8 +15,8 @@ import { bot, startBot } from './services/bot.js';
 import { startAlerts } from './services/alerts.js';
 import { startSessionWarningCron } from './services/claudeSessions.js';
 import { startWeeklySummaryCron } from './services/nutrition/weeklySummary.js';
-import { startDailyPrompts } from './services/nutrition/prompts.js';
-import { startCheckinCron } from './services/checkin.js';
+
+import { startBriefingCron } from './services/briefing.js';
 const PORT = Number(process.env.PORT) || 3001;
 
 const app = Fastify({ logger: true });
@@ -66,8 +66,7 @@ try {
   startAlerts();
   startSessionWarningCron();
   startWeeklySummaryCron();
-  startDailyPrompts();
-  startCheckinCron();
+  startBriefingCron(); // morning + evening briefings (replace the old check-in and nutrition prompt crons)
 } catch (err) {
   app.log.error(err);
   process.exit(1);

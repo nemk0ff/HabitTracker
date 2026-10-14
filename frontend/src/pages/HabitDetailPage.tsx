@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, BellOff, ChevronRight, Pencil } from 'lucide-react';
+import { Bell, BellOff, ChevronRight, Moon, Pencil } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
@@ -18,7 +18,7 @@ import { HabitDaySheet } from '../components/HabitDaySheet';
 import { SleepChart } from '../components/SleepChart';
 import { CountChart } from '../components/CountChart';
 import { MonthSummary } from '../components/MonthSummary';
-import { monthSummary } from '../utils/habitInsights';
+import { loadBedTarget, monthSummary, saveBedTarget, sleepRegime } from '../utils/habitInsights';
 import { countTarget, setHabitSkipped, setHabitValue } from '../utils/habitActions';
 import { ensureWriteAccess } from '../utils/writeAccess';
 import type { Habit, Reminder, DayOfWeek } from '../types';
@@ -36,6 +36,13 @@ export function HabitDetailPage() {
   const [reminder, setReminder] = useState<Reminder | null>(null);
   const [hoursDate, setHoursDate] = useState<string | null>(null);
   const [dayDate, setDayDate] = useState<string | null>(null);
+  // Optional bed-time target for the sleep habit, kept on this device.
+  const [bedTarget, setBedTarget] = useState<string | null>(() => (selectedHabitId ? loadBedTarget(selectedHabitId) : null));
+  const changeBedTarget = (v: string | null) => {
+    if (!selectedHabitId) return;
+    saveBedTarget(selectedHabitId, v);
+    setBedTarget(v);
+  };
 
   const loadReminder = useCallback(async () => {
     if (!selectedHabitId) return;
@@ -183,9 +190,11 @@ export function HabitDetailPage() {
           </div>
         )}
 
+        {hours && <SleepRegimeCard habit={habit} today={today} target={bedTarget} onTarget={changeBedTarget} />}
+
         {hours && (
           <div className="bg-tg-section rounded-2xl p-4 mb-5">
-            <SleepChart entries={habit.entries} color={habit.color} today={today} onSelect={setHoursDate} />
+            <SleepChart entries={habit.entries} color={habit.color} today={today} target={bedTarget} onSelect={setHoursDate} />
           </div>
         )}
 
@@ -279,10 +288,10 @@ export function HabitDetailPage() {
         <HoursSheet
           date={hoursDate}
           title={habit.name}
-          minutes={habit.entries.find((e) => e.date === hoursDate)?.value ?? 0}
+          entries={habit.entries}
           color={habit.color}
           onClose={() => setHoursDate(null)}
-          onSave={(m) => hoursDate && saveDay(hoursDate, m)}
+          onSave={(m, times) => hoursDate && setHabitValue(habit, hoursDate, m, { askIntensity: false, times })}
           skipped={hoursDate ? isSkippedOn(habit, hoursDate) : false}
           onSkip={(on) => hoursDate && setHabitSkipped(habit, hoursDate, on)}
         />
@@ -352,6 +361,115 @@ function ChallengeBlock({ habit, today }: { habit: Habit; today: string }) {
           >
             Продолжить как привычку
           </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const TARGETS = ['22:00', '22:30', '23:00', '23:30', '00:00', '00:30', '01:00'];
+
+function spreadText(min: number): string {
+  if (min < 60) return `±${min} мин`;
+  const h = Math.round((min / 60) * 10) / 10;
+  return `±${h.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ч`;
+}
+
+/** №10: average bed / wake over 14 nights, how much the bedtime wanders, optional target. */
+function SleepRegimeCard({
+  habit,
+  today,
+  target,
+  onTarget,
+}: {
+  habit: Habit;
+  today: string;
+  target: string | null;
+  onTarget: (v: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const regime = sleepRegime(habit.entries, today, target);
+  const late = 'var(--tg-theme-destructive-text-color, #e5484d)';
+  const verdict = regime?.verdict;
+  const verdictText =
+    verdict === 'even'
+      ? 'режим ровный'
+      : verdict === 'off'
+        ? `режим сбит: отбой гуляет ${spreadText(regime!.bedSpread)}`
+        : verdict === 'drifting'
+          ? `отбой плавает ${spreadText(regime!.bedSpread)}`
+          : null;
+  const lateCount = regime?.lateDates.size ?? 0;
+
+  return (
+    <section className="bg-tg-section rounded-2xl p-4 mb-5" aria-label="Режим сна">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-base font-semibold text-tg-text">Режим за 2 недели</h2>
+        {regime && <span className="text-xs text-tg-hint">{regime.nights} ноч.</span>}
+      </div>
+
+      {regime ? (
+        <>
+          <div className="flex gap-2 mt-3">
+            <div className="flex-1 rounded-xl bg-tg-secondary px-3 py-2">
+              <div className="text-xs text-tg-hint">Отбой</div>
+              <div className="font-display text-xl tabular-nums text-tg-text">{regime.avgBed}</div>
+              <div className="text-xs text-tg-hint tabular-nums">{spreadText(regime.bedSpread)}</div>
+            </div>
+            <div className="flex-1 rounded-xl bg-tg-secondary px-3 py-2">
+              <div className="text-xs text-tg-hint">Подъём</div>
+              <div className="font-display text-xl tabular-nums text-tg-text">{regime.avgWake}</div>
+            </div>
+          </div>
+          {verdictText && (
+            <p className="text-sm mt-3" style={{ color: verdict === 'off' ? late : verdict === 'even' ? habit.color : 'var(--tg-theme-text-color)' }}>
+              {verdictText}
+            </p>
+          )}
+          {lateCount > 0 && (
+            <p className="text-sm text-tg-hint mt-1">
+              Поздний отбой {target ? `(после ${target})` : '(на час позже обычного)'}:{' '}
+              <span style={{ color: late }}>{lateCount}</span>
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-tg-hint mt-1">Отмечай «Лёг / Встал» — здесь появится средний отбой и подъём.</p>
+      )}
+
+      <button
+        onClick={() => {
+          haptic('light');
+          setEditing((v) => !v);
+        }}
+        aria-expanded={editing}
+        className="w-full min-h-[44px] mt-3 flex items-center gap-2 text-sm text-left active:opacity-70"
+      >
+        <Moon size={16} className="text-tg-hint" aria-hidden />
+        <span className="flex-1 text-tg-text">Цель отбоя</span>
+        <span className="tabular-nums" style={{ color: target ? 'var(--tg-theme-text-color)' : 'var(--tg-theme-hint-color)' }}>
+          {target ?? 'нет'}
+        </span>
+        <ChevronRight size={16} className="text-tg-hint transition-transform" style={{ transform: editing ? 'rotate(90deg)' : undefined }} aria-hidden />
+      </button>
+      {editing && (
+        <div className="flex flex-wrap gap-2 mt-1" role="radiogroup" aria-label="Цель отбоя">
+          {[...TARGETS, null].map((t) => (
+            <button
+              key={t ?? 'none'}
+              role="radio"
+              aria-checked={target === t}
+              onClick={() => {
+                haptic('select');
+                onTarget(t);
+                setEditing(false);
+              }}
+              className="min-h-[40px] px-3 rounded-xl text-sm tabular-nums bg-tg-secondary active:opacity-70"
+              style={target === t ? { boxShadow: `inset 0 0 0 2px ${habit.color}`, color: 'var(--tg-theme-text-color)' } : { color: 'var(--tg-theme-text-color)' }}
+            >
+              {t ?? 'Без цели'}
+            </button>
+          ))}
         </div>
       )}
     </section>

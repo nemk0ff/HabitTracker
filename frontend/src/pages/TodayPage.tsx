@@ -302,10 +302,10 @@ export function TodayPage() {
         <HoursSheet
           date={today}
           title={hoursHabit.name}
-          minutes={hoursHabit.entries.find((e) => e.date === today)?.value ?? 0}
+          entries={hoursHabit.entries}
           color={hoursHabit.color}
           onClose={() => setHoursHabitId(null)}
-          onSave={(m) => setHabitValue(hoursHabit, today, m)}
+          onSave={(m, times) => setHabitValue(hoursHabit, today, m, { times })}
         />
       )}
       <HabitActionSheet habit={menuHabit} date={today} onClose={() => setMenuHabitId(null)} onOpen={openHabit} />

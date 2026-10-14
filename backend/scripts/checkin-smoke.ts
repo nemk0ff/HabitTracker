@@ -118,8 +118,8 @@ try {
   await prisma.habitEntry.deleteMany({ where: { habitId: water.id } });
   const all = sortCheckinHabits(await prisma.habit.findMany({ where: { userId: user.id } }));
   const allEntries = await prisma.habitEntry.findMany({ where: { habitId: { in: all.map((h) => h.id) } } });
-  const morning = checkinHabitsFor('morning', all, morningUser);
-  const evening = checkinHabitsFor('evening', all, morningUser);
+  const morning = checkinHabitsFor('morning', all);
+  const evening = checkinHabitsFor('evening', all);
   console.log('\nmorning habits:', morning.map((h) => h.name).join(', '), '(expect Вода)');
   console.log('evening habits:', evening.map((h) => h.name).join(', '), '(expect no Вода)');
   show('morning message', buildCheckinMessage(morningUser, morning, allEntries, today, 'morning'));

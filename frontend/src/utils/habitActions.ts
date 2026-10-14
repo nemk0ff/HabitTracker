@@ -3,6 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { toast, type ToastAction } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
 import { formatHours, isClosedOn, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn, isSkippedOn } from './habits';
+import type { EntryTimes } from '../api/habits';
 import type { Habit } from '../types';
 
 export const INTENSITY_LABELS = ['Легко', 'Средне', 'Тяжело'] as const;
@@ -24,8 +25,9 @@ function valueOn(habit: Habit, date: string): number {
   return habit.entries.find((e) => e.date === date)?.value ?? 0;
 }
 
-function describe(habit: Habit, value: number): string {
+function describe(habit: Habit, value: number, times?: EntryTimes | null): string {
   if (value === 0) return `«${habit.name}»: отметка снята`;
+  if (isHoursHabit(habit) && times) return `«${habit.name}»: ${times.startTime}–${times.endTime} · ${formatHours(value)}`;
   if (isHoursHabit(habit)) return `«${habit.name}»: ${formatHours(value)}`;
   if (isCountHabit(habit)) return `${habit.name}: ${value} из ${countTarget(habit)}`;
   if (hasIntensity(habit)) return `«${habit.name}»: ${INTENSITY_LABELS[Math.min(value, 3) - 1]!.toLowerCase()}`;
@@ -42,13 +44,25 @@ function noMarksYet(habits: Habit[]): boolean {
  * (an accidental tap is undone in one tap instead of silently changing history).
  * A fresh mark of an intensity habit also offers Легко / Средне / Тяжело right in the toast.
  */
-export function setHabitValue(habit: Habit, date: string, value: number, { askIntensity = true } = {}) {
+export function setHabitValue(
+  habit: Habit,
+  date: string,
+  value: number,
+  { askIntensity = true, times = null }: { askIntensity?: boolean; times?: EntryTimes | null } = {},
+) {
   const { toggleEntry, habits } = useHabitsStore.getState();
-  const prev = valueOn(habit, date);
+  const prevEntry = habit.entries.find((e) => e.date === date);
+  const prev = prevEntry?.value ?? 0;
   const prevSkipped = isSkippedOn(habit, date);
-  if (prev === value && !prevSkipped) return;
+  const prevTimes: EntryTimes | null =
+    prevEntry?.startTime && prevEntry.endTime ? { startTime: prevEntry.startTime, endTime: prevEntry.endTime } : null;
+  const sameTimes = (prevTimes?.startTime ?? null) === (times?.startTime ?? null) && (prevTimes?.endTime ?? null) === (times?.endTime ?? null);
+  if (prev === value && !prevSkipped && (value === 0 || sameTimes)) return;
   const firstEver = isDoneValue(habit, value) && noMarksYet(habits);
-  const undo: ToastAction = { label: 'Отменить', onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped) };
+  const undo: ToastAction = {
+    label: 'Отменить',
+    onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped, prevSkipped ? null : prevTimes),
+  };
   const offerIntensity = askIntensity && hasIntensity(habit) && prev === 0 && value > 0;
   const actions = offerIntensity
     ? [
@@ -63,7 +77,7 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
       ]
     : [undo];
 
-  void toggleEntry(habit.id, date, value);
+  void toggleEntry(habit.id, date, value, false, value > 0 ? times : null);
   haptic(value > 0 ? 'light' : 'select');
 
   if (firstEver) {
@@ -75,7 +89,7 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
     });
     return;
   }
-  const text = offerIntensity ? `«${habit.name}» отмечено. Как прошло?` : describe(habit, value);
+  const text = offerIntensity ? `«${habit.name}» отмечено. Как прошло?` : describe(habit, value, times);
   toast(text, { actions, ms: offerIntensity ? 6000 : 4000 });
 }
 
@@ -88,9 +102,14 @@ export function setHabitSkipped(habit: Habit, date: string, skipped: boolean) {
   const prev = valueOn(habit, date);
   const prevSkipped = isSkippedOn(habit, date);
   if (prevSkipped === skipped) return;
+  const e = habit.entries.find((x) => x.date === date);
+  const prevTimes = e?.startTime && e.endTime ? { startTime: e.startTime, endTime: e.endTime } : null;
   void toggleEntry(habit.id, date, 0, skipped);
   haptic('select');
-  const undo: ToastAction = { label: 'Отменить', onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped) };
+  const undo: ToastAction = {
+    label: 'Отменить',
+    onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped, prevSkipped ? null : prevTimes),
+  };
   toast(skipped ? 'Пропуск — серия сохранится' : `«${habit.name}»: пропуск отменён`, { actions: [undo], ms: 5000 });
 }
 

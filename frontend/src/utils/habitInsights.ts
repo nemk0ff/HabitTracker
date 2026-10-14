@@ -3,7 +3,7 @@ import { ru } from 'date-fns/locale';
 import { calculateStreak, shiftDate, toDateString } from './dates';
 import { doneEntries, markedDates, neededForWeek, skippedDates, weekDates } from './habits';
 import { habitStartDate, metWeekStarts, rateBetween } from './habitStats';
-import type { Habit } from '../types';
+import type { Habit, HabitEntry } from '../types';
 
 /** Pure "insight" numbers for the habit page. `today` is a local YYYY-MM-DD. */
 
@@ -132,4 +132,136 @@ export function dailySeries(h: Pick<Habit, 'entries'>, today: string, days: numb
     const e = byDate.get(date);
     return { date, value: e?.value ?? 0, skipped: !!e?.skipped };
   });
+}
+
+/* ───────────── Sleep: bed → wake (idea №10) ───────────── */
+
+/** Bed / wake time of a night, local "HH:MM". The night belongs to the wake date. */
+export interface SleepTimes {
+  startTime: string;
+  endTime: string;
+}
+
+const DAY_MIN = 24 * 60;
+
+export function hhmmToMin(hhmm: string): number {
+  return Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+}
+
+export function minToHHMM(min: number): string {
+  const m = ((Math.round(min) % DAY_MIN) + DAY_MIN) % DAY_MIN;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/** Minutes from bed to wake across midnight («01:30» → «08:00» = 390). Same formula as the backend. */
+export function sleepMinutes(bed: string, wake: string): number {
+  const diff = hhmmToMin(wake) - hhmmToMin(bed);
+  return diff > 0 ? diff : diff + DAY_MIN;
+}
+
+/** «6 ч 30 мин», «8 ч». */
+export function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m ? `${h} ч ${m} мин` : `${h} ч`;
+}
+
+/** Bed time on an evening-anchored axis (minutes since 12:00), so 23:30 < 01:30. */
+export function bedAxis(hhmm: string): number {
+  return (hhmmToMin(hhmm) - 12 * 60 + DAY_MIN) % DAY_MIN;
+}
+
+export function hasTimes(e: HabitEntry | undefined): e is HabitEntry & SleepTimes {
+  return !!e && !!e.startTime && !!e.endTime && e.value > 0;
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+const roundTo = (m: number, step: number) => Math.round(m / step) * step;
+
+/** Nights with bed/wake times among the `days` nights ending on `today`. */
+export function timedNights(entries: HabitEntry[], today: string, days = 14): (HabitEntry & SleepTimes)[] {
+  const from = shiftDate(today, -days + 1);
+  return entries.filter((e): e is HabitEntry & SleepTimes => hasTimes(e) && e.date >= from && e.date <= today);
+}
+
+/**
+ * What to pre-fill the «Лёг / Встал» wheels with for the night of `date`: that night's own times,
+ * else the previous night's, else the 14-day median, else 23:30 → 07:30. Rounded to `step` minutes.
+ */
+export function suggestSleepTimes(entries: HabitEntry[], date: string, step = 15): SleepTimes {
+  const own = entries.find((e) => e.date === date);
+  if (hasTimes(own)) return { startTime: own.startTime, endTime: own.endTime };
+  const prev = entries.find((e) => e.date === shiftDate(date, -1));
+  const pick = (bed: number, wake: number): SleepTimes => ({
+    startTime: minToHHMM(roundTo(bed, step)),
+    endTime: minToHHMM(roundTo(wake, step)),
+  });
+  if (hasTimes(prev)) return pick(hhmmToMin(prev.startTime), hhmmToMin(prev.endTime));
+  const nights = timedNights(entries, shiftDate(date, -1));
+  if (nights.length > 0) {
+    return pick(median(nights.map((n) => bedAxis(n.startTime))) + 12 * 60, median(nights.map((n) => hhmmToMin(n.endTime))));
+  }
+  return { startTime: '23:30', endTime: '07:30' };
+}
+
+export type RegimeVerdict = 'even' | 'drifting' | 'off';
+
+export interface SleepRegime {
+  nights: number;
+  /** Mean bed / wake time, "HH:MM". */
+  avgBed: string;
+  avgWake: string;
+  /** Standard deviation of the bed time, minutes. */
+  bedSpread: number;
+  /** ≤ 45 min — ровный, > 90 — сбит, between — плавает. Null with < 3 nights. */
+  verdict: RegimeVerdict | null;
+  /** Dates whose bed time is late: after the target, or (no target) an hour+ after the mean. */
+  lateDates: Set<string>;
+}
+
+/** Bed / wake regime over the last `days` nights (null when no night has times). */
+export function sleepRegime(entries: HabitEntry[], today: string, target: string | null, days = 14): SleepRegime | null {
+  const nights = timedNights(entries, today, days);
+  if (nights.length === 0) return null;
+  const beds = nights.map((n) => bedAxis(n.startTime));
+  const wakes = nights.map((n) => hhmmToMin(n.endTime));
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  const bedMean = mean(beds);
+  const bedSpread = Math.round(Math.sqrt(mean(beds.map((b) => (b - bedMean) ** 2))));
+  const lateLimit = target ? bedAxis(target) : bedMean + 60;
+  const lateDates = new Set(nights.filter((n) => bedAxis(n.startTime) > lateLimit).map((n) => n.date));
+  return {
+    nights: nights.length,
+    avgBed: minToHHMM(roundTo(bedMean + 12 * 60, 5)),
+    avgWake: minToHHMM(roundTo(mean(wakes), 5)),
+    bedSpread,
+    verdict: nights.length < 3 ? null : bedSpread <= 45 ? 'even' : bedSpread > 90 ? 'off' : 'drifting',
+    lateDates,
+  };
+}
+
+/* Optional bed-time target per habit, kept on this device. */
+const targetKey = (habitId: number) => `sleepBedTarget:${habitId}`;
+
+export function loadBedTarget(habitId: number): string | null {
+  try {
+    const v = localStorage.getItem(targetKey(habitId));
+    return v && /^\d{2}:\d{2}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveBedTarget(habitId: number, value: string | null): void {
+  try {
+    if (value) localStorage.setItem(targetKey(habitId), value);
+    else localStorage.removeItem(targetKey(habitId));
+  } catch {
+    /* storage unavailable — the target just won't stick */
+  }
 }

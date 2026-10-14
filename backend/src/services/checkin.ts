@@ -1,21 +1,18 @@
 /**
- * Evening check-in: at the user's local `checkinTime` the bot sends one message with a
- * button per habit, so the day gets marked without opening the Mini App.
- *
- * Optional morning check-in at `morningCheckinTime`: only `timeOfDay='morning'` habits; with it on, the
- * evening one leaves morning habits out.
+ * Habit check-in buttons + their callbacks. The messages themselves are the morning / evening briefings
+ * (`services/briefing.ts`, which also owns the send cron): the morning one carries `timeOfDay='morning'`
+ * habits, the evening one the rest.
  *
  * Callback data (≤ 64 bytes): `ci:<habitId>:<YYYY-MM-DD>:<value>` (value 0 = unmark; for count
  * habits value is the new absolute count, and -1 = "+1 from the current entry at tap time"),
- * `cd:<YYYY-MM-DD>` («Готово» → summary); a trailing `:m` marks the morning message. The date is baked in so a late tap still marks
- * the day the message was about; only the user's own habits and dates ≤ 2 days old count.
+ * `cd:<YYYY-MM-DD>` («Готово» → summary), and the briefing's nutrition answers
+ * `ci:<sl|wt|tr|dc>:<YYYY-MM-DD>[:<value>]` (applied by `nutrition/prompts.ts` `applyPrompt`); a trailing
+ * `:m` marks the morning message. The date is baked in so a late tap still marks the day the message was
+ * about; only the user's own habits and dates ≤ 2 days old count. A tap re-renders the whole briefing.
  */
-import cron from 'node-cron';
 import { prisma } from '../db.js';
 import { track } from './analytics.js';
-import { forEachSafe } from '../utils/safe.js';
-import { sendToUser } from './messaging.js';
-import { isOwnerTelegramId, ownerWhere } from '../utils/owner.js';
+import { isOwnerTelegramId } from '../utils/owner.js';
 import {
   addDays,
   challengeProgress,
@@ -102,20 +99,22 @@ export function sortCheckinHabits<T extends Pick<CheckinHabit, 'timeOfDay' | 'so
   );
 }
 
+/** The morning briefing is on by default: `morningCheckinTime` null means this time; MORNING_OFF turns it off. */
+export const DEFAULT_MORNING_TIME = '09:00';
+export const MORNING_OFF = 'off';
+/** The local HH:MM to send the morning briefing at, or null when it's turned off. */
+export const morningTimeOf = (user: { morningCheckinTime: string | null }): string | null =>
+  user.morningCheckinTime === MORNING_OFF ? null : (user.morningCheckinTime ?? DEFAULT_MORNING_TIME);
+
 /**
- * Habits of a `kind` check-in: the morning one has only morning habits; the evening one drops them
- * when the user has the morning check-in on.
+ * Habits of a `kind` check-in: the morning one has only morning habits; the evening one the rest
+ * (the morning briefing always runs, see DEFAULT_MORNING_TIME).
  */
-export function checkinHabitsFor<T extends Pick<CheckinHabit, 'timeOfDay'>>(
-  kind: CheckinKind,
-  habits: T[],
-  user: { morningCheckinTime: string | null },
-): T[] {
-  if (kind === 'morning') return habits.filter((h) => h.timeOfDay === 'morning');
-  return user.morningCheckinTime ? habits.filter((h) => h.timeOfDay !== 'morning') : habits;
+export function checkinHabitsFor<T extends Pick<CheckinHabit, 'timeOfDay'>>(kind: CheckinKind, habits: T[]): T[] {
+  return kind === 'morning' ? habits.filter((h) => h.timeOfDay === 'morning') : habits.filter((h) => h.timeOfDay !== 'morning');
 }
 
-const label = (h: CheckinHabit) => (h.icon ? `${h.icon} ${h.name}` : h.name);
+export const label = (h: Pick<CheckinHabit, 'icon' | 'name'>) => (h.icon ? `${h.icon} ${h.name}` : h.name);
 
 /** Button label: the habit plus « · 12/30» for a challenge. */
 function buttonLabel(h: CheckinHabit, entries: CheckinEntry[], date: string): string {
@@ -123,12 +122,12 @@ function buttonLabel(h: CheckinHabit, entries: CheckinEntry[], date: string): st
   return p ? `${label(h)} · ${p.done}/${p.total}` : label(h);
 }
 
-function fmtHours(minutes: number): string {
+export function fmtHours(minutes: number): string {
   const h = minutes / 60;
   return `${Number.isInteger(h) ? h : h.toFixed(1).replace('.', ',')} ч`;
 }
 
-function weekLine(habits: CheckinHabit[], entries: CheckinEntry[], date: string): string | null {
+export function weekLine(habits: CheckinHabit[], entries: CheckinEntry[], date: string): string | null {
   if (weekdayIndex(date) !== 6) return null; // Sundays only
   const stats = weekStats(habits, datesByHabit(entries, habits), date, skippedByHabit(entries));
   if (stats.target === 0) return null;
@@ -137,7 +136,7 @@ function weekLine(habits: CheckinHabit[], entries: CheckinEntry[], date: string)
   return line;
 }
 
-function footerRow(date: string, withDone: boolean, suffix = ''): Button[] {
+export function footerRow(date: string, withDone: boolean, suffix = ''): Button[] {
   const row: Button[] = [];
   if (WEBAPP_URL) row.push({ text: '📱 Открыть трекер', web_app: { url: WEBAPP_URL } });
   if (withDone) row.push({ text: 'Готово', callback_data: `cd:${date}${suffix}` });
@@ -157,6 +156,17 @@ export function buildCheckinMessage(
   date: string,
   kind: CheckinKind = 'evening',
 ): CheckinMessage {
+  const suffix = kind === 'morning' ? ':m' : '';
+  const keyboard = habitRows(habits, entries, date, kind);
+  keyboard.push(footerRow(date, true, suffix));
+
+  const header = kind === 'morning' ? MORNING_CHECKIN_TEXT : CHECKIN_TEXT;
+  const week = kind === 'evening' ? weekLine(habits, entries, date) : null;
+  return { text: week ? `${header}\n\n${week}` : header, keyboard: keyboard.filter((r) => r.length > 0) };
+}
+
+/** The per-habit button rows of a check-in (no footer). */
+export function habitRows(habits: CheckinHabit[], entries: CheckinEntry[], date: string, kind: CheckinKind): Keyboard {
   const today = new Map<number, number>();
   const skippedToday = new Set<number>();
   for (const e of entries) {
@@ -203,11 +213,7 @@ export function buildCheckinMessage(
       ]);
     }
   }
-  keyboard.push(footerRow(date, true, suffix));
-
-  const header = kind === 'morning' ? MORNING_CHECKIN_TEXT : CHECKIN_TEXT;
-  const week = kind === 'evening' ? weekLine(habits, entries, date) : null;
-  return { text: week ? `${header}\n\n${week}` : header, keyboard: keyboard.filter((r) => r.length > 0) };
+  return keyboard;
 }
 
 /** «Готово»: "Отмечено 3 из 4 · серия: 💪 Спорт — 5 дней 🔥". Habits skipped on `date` are left out of the count. */
@@ -242,7 +248,7 @@ export function buildCheckinSummary(
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-async function loadUserHabits(userId: number, date: string) {
+export async function loadUserHabits(userId: number, date: string) {
   const habits = sortCheckinHabits(await prisma.habit.findMany({ where: { userId, archived: false } }));
   const entries = await prisma.habitEntry.findMany({
     where: {
@@ -252,99 +258,6 @@ async function loadUserHabits(userId: number, date: string) {
     select: { habitId: true, date: true, value: true, skipped: true },
   });
   return { habits, entries };
-}
-
-// ─── Sending ──────────────────────────────────────────────────────────────────
-
-let isRunning = false;
-
-/** A tick can be missed (pm2 restart during a deploy, a slow previous run) — catch up within this window. */
-const SEND_WINDOW_MIN = 10;
-
-const toMinutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
-
-/** Sends both check-ins (evening, then morning) that are due. */
-export async function sendDueCheckins(now = new Date()): Promise<void> {
-  await sendDue('evening', now);
-  await sendDue('morning', now);
-}
-
-/**
- * Sends the `kind` check-in to every user whose `checkinTime` / `morningCheckinTime` passed less than SEND_WINDOW_MIN
- * ago (once per local day, deduped by `lastCheckinDate` / `lastMorningCheckinDate`).
- */
-async function sendDue(kind: CheckinKind, now: Date): Promise<void> {
-  const morning = kind === 'morning';
-  const users = await prisma.user.findMany({
-    // A personal app: the owner only.
-    where: { AND: [ownerWhere(), morning ? { morningCheckinTime: { not: null } } : { checkinTime: { not: null } }] },
-  });
-  const due = users
-    .map((u) => ({ user: u, clock: localClock(now, u.tzOffset) }))
-    .filter(({ user, clock }) => {
-      const at = morning ? user.morningCheckinTime : user.checkinTime;
-      const last = morning ? user.lastMorningCheckinDate : user.lastCheckinDate;
-      if (!at) return false;
-      const late = toMinutes(clock.hhmm) - toMinutes(at);
-      return late >= 0 && late < SEND_WINDOW_MIN && last !== clock.date && user.canMessage !== false;
-    });
-
-  await forEachSafe(due, `[checkin] send ${kind}`, ({ user }) => `user ${user.id}`, async ({ user, clock }) => {
-    const loaded = await loadUserHabits(user.id, clock.date);
-    const habits = checkinHabitsFor(kind, loaded.habits, user);
-    const { entries } = loaded;
-    if (habits.length === 0) return;
-
-    // Done or skipped today = nothing to ask about.
-    const todayMs = dayDate(clock.date).getTime();
-    const resolvedToday = new Set(
-      entries
-        .filter(
-          (e) => e.date.getTime() === todayMs && (e.skipped || habits.some((h) => h.id === e.habitId && isDone(h, e.value))),
-        )
-        .map((e) => e.habitId),
-    );
-    // Claim the day first: a slow/failed send must never repeat on the next tick.
-    const previous = morning ? user.lastMorningCheckinDate : user.lastCheckinDate;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: morning ? { lastMorningCheckinDate: clock.date } : { lastCheckinDate: clock.date },
-    });
-    if (habits.every((h) => resolvedToday.has(h.id))) return;
-
-    const msg = buildCheckinMessage(user, habits, entries, clock.date, kind);
-    // A 403 marks the channel closed (canMessage=false) but keeps the check-in time: the user chose it,
-    // the bot just can't reach them yet (e.g. opened the Mini App without /start).
-    const sent = await sendToUser(user, msg.text, { reply_markup: { inline_keyboard: msg.keyboard as any } }, { purpose: `checkin_${kind}` });
-    if (!sent) {
-      // Closed channel (403 / skipped): release the claim so a grant later today still gets it in the window.
-      await prisma.user.update({
-        where: { id: user.id },
-        data: morning ? { lastMorningCheckinDate: previous } : { lastCheckinDate: previous },
-      });
-      return;
-    }
-    track({ userId: user.id, event: morning ? 'morning_checkin_sent' : 'checkin_sent', category: 'bot', label: clock.date });
-  });
-}
-
-export function startCheckinCron(): void {
-  cron.schedule(
-    '* * * * *',
-    async () => {
-      if (isRunning) return;
-      isRunning = true;
-      try {
-        await sendDueCheckins();
-      } catch (e) {
-        console.error('[checkin] tick failed:', e);
-      } finally {
-        isRunning = false;
-      }
-    },
-    { timezone: 'UTC' },
-  );
-  console.log('[checkin] scheduled (runs every minute)');
 }
 
 // ─── Callbacks ────────────────────────────────────────────────────────────────
@@ -360,30 +273,42 @@ export interface CheckinCallbackResult {
 
 const reject = (answer: string): CheckinCallbackResult => ({ answer, alert: true });
 
+const CALLBACK_RE =
+  /^(?:ci:(\d+):(\d{4}-\d{2}-\d{2}):(-1|\d+)|cd:(\d{4}-\d{2}-\d{2})|ci:(sl|wt|tr|dc):(\d{4}-\d{2}-\d{2})(?::(\d{4}-\d{4}|[\d.]+))?)(:m)?$/;
+
 /** Handles `ci:` / `cd:` taps for the Telegram user `telegramId`. */
 export async function handleCheckinCallback(telegramId: number | bigint, data: string): Promise<CheckinCallbackResult> {
-  const m = data.match(/^(?:ci:(\d+):(\d{4}-\d{2}-\d{2}):(-1|\d+)|cd:(\d{4}-\d{2}-\d{2}))(:m)?$/);
+  const m = data.match(CALLBACK_RE);
   if (!m) return reject('Неизвестная кнопка');
   if (!isOwnerTelegramId(telegramId)) return reject('Недоступно');
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
   if (!user) return reject('Недоступно');
 
-  const date = (m[2] ?? m[4])!;
-  const kind: CheckinKind = m[5] ? 'morning' : 'evening';
-  const load = async () => {
-    const { habits, entries } = await loadUserHabits(user.id, date);
-    return { habits: checkinHabitsFor(kind, habits, user), entries };
-  };
+  const date = (m[2] ?? m[4] ?? m[6])!;
+  const kind: CheckinKind = m[8] ? 'morning' : 'evening';
   const today = localClock(new Date(), user.tzOffset).date;
   if (Number.isNaN(dayDate(date).getTime()) || date > today || date < addDays(today, -MAX_CALLBACK_AGE_DAYS)) {
     return reject('Эта сводка устарела — отметь в трекере');
   }
+  /** The tapped message re-rendered as the whole briefing. */
+  const rerender = async (): Promise<CheckinMessage> => {
+    const { buildBriefing } = await import('./briefing.js');
+    return buildBriefing(user, date, kind);
+  };
 
   if (m[4]) {
-    const { habits, entries } = await load();
-    const summary = buildCheckinSummary(habits, entries, date, kind);
+    const { habits, entries } = await loadUserHabits(user.id, date);
+    const summary = buildCheckinSummary(checkinHabitsFor(kind, habits), entries, date, kind);
     track({ userId: user.id, event: 'checkin_done', category: 'bot', label: date });
     return { message: summary };
+  }
+
+  if (m[5]) {
+    // Briefing answers (sleep / weight / training / day complete) share the legacy prompt write path.
+    const { applyPrompt } = await import('./nutrition/prompts.js');
+    const r = await applyPrompt(user.id, m[5] as 'sl' | 'wt' | 'tr' | 'dc', date, m[7]);
+    if (r.alert) return reject(r.text);
+    return { answer: r.text, message: await rerender() };
   }
 
   const habitId = Number(m[1]);
@@ -416,11 +341,14 @@ export async function handleCheckinCallback(telegramId: number | bigint, data: s
       if (existing && existing.value > 0) value = existing.value;
     }
     await setHabitEntry(habit, dayDate(date), value);
+    if (habit.measure === 'hours') {
+      // A plain duration replaces a bed/wake record — the old times no longer match the value.
+      await prisma.habitEntry.updateMany({ where: { habitId, date: dayDate(date) }, data: { startTime: null, endTime: null } });
+    }
     track({ userId: user.id, event: 'entry_checked', category: 'bot', label: date, metadata: { habitId, value, source: 'bot' } });
     answer = habit.measure === 'hours' ? `Записал: ${fmtHours(value)}` : 'Отмечено ✅';
   }
   track({ userId: user.id, event: 'checkin_marked', category: 'bot', label: date, metadata: { habitId, value } });
 
-  const { habits, entries } = await load();
-  return { answer, message: buildCheckinMessage(user, habits, entries, date, kind) };
+  return { answer, message: await rerender() };
 }

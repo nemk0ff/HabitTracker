@@ -34,6 +34,8 @@ export function serializeHabit(h: HabitRow) {
       date: e.date.toISOString().split('T')[0],
       value: e.value,
       skipped: e.skipped,
+      startTime: e.startTime,
+      endTime: e.endTime,
     })),
   };
 }

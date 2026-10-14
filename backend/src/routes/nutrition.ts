@@ -5,7 +5,9 @@ import { authGuard } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
 import { favoriteIds, searchFoods, recentFoods, serializeFood, visibleTo } from '../services/nutrition/foodSearch.js';
 import { normalizeSearch, round1, scaleMacros, sumMacros } from '../services/nutrition/nutritionMath.js';
-import { getJob, jobView, startTextLog, undoJob, MEALS as AGENT_MEALS, type Meal as AgentMeal } from '../services/nutrition/textLog.js';
+import { getJob, jobView, startAssistant, undoJob } from '../services/assistant.js';
+import { MEALS as AGENT_MEALS, type Meal as AgentMeal } from '../services/nutrition/textLog.js';
+import { isValidWeight, setWeight } from '../services/nutrition/weight.js';
 import { computePlan, parsePhases, validatePhases, weightTrend } from '../services/nutrition/model.js';
 
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
@@ -604,7 +606,7 @@ export async function nutritionRoutes(app: FastifyInstance) {
     if (meal !== undefined && !(AGENT_MEALS as readonly string[]).includes(meal)) {
       return reply.status(400).send({ error: 'invalid meal' });
     }
-    const job = startTextLog(userId, text, { date: date ? dayString(date) : undefined, meal: meal as AgentMeal | undefined });
+    const job = startAssistant(userId, text, { date: date ? dayString(date) : undefined, meal: meal as AgentMeal | undefined });
     return reply.status(202).send(jobView(job));
   });
 
@@ -749,16 +751,12 @@ export async function nutritionRoutes(app: FastifyInstance) {
     const date = parseDay(request.body?.date);
     const weightKg = request.body?.weightKg;
     if (!date) return reply.status(400).send({ error: 'date must be YYYY-MM-DD' });
-    if (!isNonNegNumber(weightKg) || weightKg < 20 || weightKg > 400) {
+    if (!isValidWeight(weightKg)) {
       return reply.status(400).send({ error: 'weightKg must be between 20 and 400' });
     }
-    const w = await prisma.weightEntry.upsert({
-      where: { userId_date: { userId, date } },
-      update: { weightKg: round1(weightKg) },
-      create: { userId, date, weightKg: round1(weightKg) },
-    });
+    const w = await setWeight(userId, dayString(date), weightKg);
     track({ userId, event: 'weight_logged', category: 'miniapp' });
-    return { date: dayString(w.date), weightKg: w.weightKg };
+    return w;
   });
 
   app.delete<{ Params: { date: string } }>('/nutrition/weight/:date', async (request, reply) => {
