@@ -26,6 +26,8 @@ export function serializeHabit(h: HabitRow) {
     dailyTarget: h.dailyTarget,
     sortOrder: h.sortOrder,
     archived: h.archived,
+    challengeDays: h.challengeDays,
+    challengeStart: h.challengeStart,
     createdAt: h.createdAt.toISOString(),
     entries: (h.entries ?? []).map((e) => ({
       id: e.id,
@@ -61,6 +63,29 @@ function parseDailyTarget(v: unknown): Parsed<number> {
   return { ok: false };
 }
 
+const CHALLENGE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Max challenge length: GET /habits loads 18 weeks of entries, so the client can't count a longer one. */
+const CHALLENGE_MAX_DAYS = 120;
+const YEAR_MS = 366 * 86_400_000;
+
+/**
+ * `challengeDays` 3..120 needs a real local `challengeStart` (YYYY-MM-DD, within ±1 year of now);
+ * `challengeDays: null` clears both. Returns undefined when the body doesn't touch the challenge.
+ */
+function parseChallenge(days: unknown, start: unknown): Parsed<{ challengeDays: number | null; challengeStart: string | null }> | undefined {
+  if (days === undefined) return undefined;
+  if (days === null) return { ok: true, value: { challengeDays: null, challengeStart: null } };
+  if (typeof days !== 'number' || !Number.isInteger(days) || days < 3 || days > CHALLENGE_MAX_DAYS) return { ok: false };
+  if (typeof start !== 'string' || !CHALLENGE_DATE_RE.test(start)) return { ok: false };
+  const at = new Date(start + 'T00:00:00Z');
+  if (Number.isNaN(at.getTime()) || at.toISOString().slice(0, 10) !== start) return { ok: false }; // rejects 2026-02-30
+  if (Math.abs(at.getTime() - Date.now()) > YEAR_MS) return { ok: false };
+  return { ok: true, value: { challengeDays: days, challengeStart: start } };
+}
+
+const CHALLENGE_ERROR = `challengeDays must be null or an integer 3-${CHALLENGE_MAX_DAYS} with a real challengeStart YYYY-MM-DD within a year of today`;
+
 const TIME_OF_DAY_ERROR = `timeOfDay must be null or one of ${TIMES_OF_DAY.join(', ')}`;
 const DAILY_TARGET_ERROR = 'dailyTarget must be an integer 1-99 for count habits';
 
@@ -90,6 +115,8 @@ export async function habitsRoutes(app: FastifyInstance) {
       weeklyTarget?: number | null;
       timeOfDay?: string | null;
       dailyTarget?: number | null;
+      challengeDays?: number | null;
+      challengeStart?: string | null;
     };
   }>(
     '/habits',
@@ -109,6 +136,8 @@ export async function habitsRoutes(app: FastifyInstance) {
         if (!parsed.ok) return reply.status(400).send({ error: DAILY_TARGET_ERROR });
         dailyTarget = parsed.value;
       }
+      const challenge = parseChallenge(request.body.challengeDays, request.body.challengeStart);
+      if (challenge && !challenge.ok) return reply.status(400).send({ error: CHALLENGE_ERROR });
 
       const trimmedName = typeof name === 'string' ? name.trim() : '';
       if (!trimmedName) {
@@ -144,9 +173,14 @@ export async function habitsRoutes(app: FastifyInstance) {
           weeklyTarget: weekly.value,
           timeOfDay: timeOfDay.value,
           dailyTarget,
+          ...(challenge?.ok && challenge.value),
           sortOrder: (_max.sortOrder ?? -1) + 1,
         },
       });
+
+      if (habit.challengeDays) {
+        track({ userId, event: 'challenge_started', category: 'miniapp', label: habit.name, metadata: { days: habit.challengeDays, habitId: habit.id } });
+      }
 
       track({
         userId,
@@ -188,6 +222,8 @@ export async function habitsRoutes(app: FastifyInstance) {
       timeOfDay?: string | null;
       dailyTarget?: number | null;
       archived?: boolean;
+      challengeDays?: number | null;
+      challengeStart?: string | null;
     };
   }>(
     '/habits/:id',
@@ -217,6 +253,8 @@ export async function habitsRoutes(app: FastifyInstance) {
           ? null
           : parseDailyTarget(request.body.dailyTarget);
       if (dailyTarget && !dailyTarget.ok) return reply.status(400).send({ error: DAILY_TARGET_ERROR });
+      const challenge = parseChallenge(request.body.challengeDays, request.body.challengeStart);
+      if (challenge && !challenge.ok) return reply.status(400).send({ error: CHALLENGE_ERROR });
       if (archived !== undefined && typeof archived !== 'boolean') {
         return reply.status(400).send({ error: 'archived must be a boolean' });
       }
@@ -243,12 +281,17 @@ export async function habitsRoutes(app: FastifyInstance) {
           ...(timeOfDay?.ok && { timeOfDay: timeOfDay.value }),
           ...(dailyTarget?.ok && { dailyTarget: dailyTarget.value }),
           ...(archived !== undefined && { archived }),
+          ...(challenge?.ok && challenge.value),
         },
         include: { entries: entriesSince() },
       });
 
       if (archived !== undefined && archived !== existing.archived) {
         track({ userId, event: archived ? 'habit_archived' : 'habit_restored', category: 'miniapp', label: habit.name });
+      }
+      const c = challenge?.ok ? challenge.value : null;
+      if (c?.challengeDays && (!existing.challengeDays || c.challengeStart !== existing.challengeStart)) {
+        track({ userId, event: 'challenge_started', category: 'miniapp', label: habit.name, metadata: { days: c.challengeDays, habitId } });
       }
       track({ userId, event: 'habit_edited', category: 'miniapp', label: habit.name });
 

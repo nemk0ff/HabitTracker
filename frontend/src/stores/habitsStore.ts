@@ -18,7 +18,8 @@ interface HabitsState {
   setArchived: (id: number, archived: boolean) => Promise<boolean>;
   removeHabit: (id: number) => Promise<void>;
   /** `skipped: true` stores a pass for the day (value 0); value > 0 clears a skip; 0 alone deletes. */
-  toggleEntry: (habitId: number, date: string, value: number, skipped?: boolean) => Promise<void>;
+  /** Resolves true once the server saved this write, false if it failed (it was rolled back). */
+  toggleEntry: (habitId: number, date: string, value: number, skipped?: boolean) => Promise<boolean>;
 }
 
 /** Replaces (or removes, when `entry` is undefined) one habit's entry for `date`. */
@@ -35,7 +36,7 @@ function withEntry(habits: Habit[], habitId: number, date: string, entry: HabitE
  * order the user made them and the last action wins. `latestWrite` tells a failing write whether
  * a newer one for the same cell has superseded it (then its rollback would be wrong).
  */
-const writeChains = new Map<string, Promise<void>>();
+const writeChains = new Map<string, Promise<boolean>>();
 const latestWrite = new Map<string, number>();
 let writeSeq = 0;
 
@@ -143,9 +144,10 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
         : { ...base, value, skipped: false };
     set((s) => ({ habits: withEntry(s.habits, habitId, date, nextEntry) }));
 
-    const run = async () => {
+    const run = async (): Promise<boolean> => {
       try {
         await habitsApi.toggleEntry(habitId, date, value, skipped);
+        return true;
       } catch (e: any) {
         // The last write of the chain failed: its `prevEntry` may itself be an unsaved optimistic
         // value (several failed taps in a row), so roll back and then re-sync with the server.
@@ -153,10 +155,11 @@ export const useHabitsStore = create<HabitsState>((set, get) => ({
           set((s) => ({ habits: withEntry(s.habits, habitId, date, prevEntry), error: e.message }));
           void get().load();
         }
+        return false;
       }
     };
 
-    const chain = (writeChains.get(key) ?? Promise.resolve()).then(run);
+    const chain = (writeChains.get(key) ?? Promise.resolve(true)).then(run);
     writeChains.set(key, chain);
     void chain.finally(() => {
       if (writeChains.get(key) === chain) {

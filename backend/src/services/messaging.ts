@@ -6,6 +6,7 @@
  * their settings stay; we just mark the channel closed and skip sends until it reopens (/start, initData
  * `allows_write_to_pm`, or `POST /api/me/write-access`).
  */
+import { InputFile } from 'grammy';
 import type { Message } from 'grammy/types';
 import { prisma } from '../db.js';
 import { bot } from './bot.js';
@@ -39,10 +40,27 @@ export async function sendToUser(
   extra?: SendExtra,
   opts: SendOptions = {},
 ): Promise<Message.TextMessage | null> {
+  return deliver(user, opts, () => bot.api.sendMessage(String(user.telegramId), text, extra));
+}
+
+type PhotoExtra = Parameters<typeof bot.api.sendPhoto>[2];
+
+/** Same as `sendToUser`, for a photo from memory (e.g. a PNG the Mini App rendered). */
+export async function sendPhotoToUser(
+  user: Recipient,
+  photo: Buffer,
+  extra?: PhotoExtra,
+  opts: SendOptions = {},
+): Promise<Message.PhotoMessage | null> {
+  return deliver(user, opts, () => bot.api.sendPhoto(String(user.telegramId), new InputFile(photo, 'card.png'), extra));
+}
+
+/** Runs `send` unless the channel is known closed; keeps `canMessage` in sync with the outcome (403 → false). */
+async function deliver<M>(user: Recipient, opts: SendOptions, send: () => Promise<M>): Promise<M | null> {
   if (user.canMessage === false && !opts.force) return null;
-  let msg: Message.TextMessage;
+  let msg: M;
   try {
-    msg = await bot.api.sendMessage(String(user.telegramId), text, extra);
+    msg = await send();
   } catch (e) {
     if (!isForbidden(e)) throw e;
     if (user.canMessage !== false) {

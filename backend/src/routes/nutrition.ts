@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import type { FoodLogEntry, NutritionGoal } from '@prisma/client';
+import type { FoodLogEntry, MealTemplate, NutritionGoal } from '@prisma/client';
 import { prisma } from '../db.js';
 import { nutritionGuard } from '../middleware/featureGuard.js';
 import { track } from '../services/analytics.js';
@@ -95,6 +95,57 @@ function validateFood(body: FoodBody, partial: boolean): string | null {
     }
   }
   return null;
+}
+
+/** Snapshot of `grams` of a visible food for a diary entry (null = not visible). Bumps the food's usageCount. */
+async function foodSnapshot(userId: number, foodId: number, grams: number) {
+  const food = await prisma.food.findFirst({ where: { id: foodId, ...visibleTo(userId) } });
+  if (!food) return null;
+  await prisma.food.update({ where: { id: food.id }, data: { usageCount: { increment: 1 } } });
+  return { foodId: food.id, name: food.name, ...scaleMacros(food, grams) };
+}
+
+// ─── Meal templates ───────────────────────────────────────────────────────────
+
+const MAX_TEMPLATES = 30;
+const MAX_TEMPLATE_ITEMS = 20;
+const TEMPLATE_NAME_MAX = 40;
+
+type TemplateItem = { foodId: number; grams: number };
+
+const isValidGrams = (g: unknown): g is number => isNonNegNumber(g) && g > 0 && g <= 5000;
+
+function parseTemplateItems(raw: string): TemplateItem[] {
+  try {
+    const items: unknown = JSON.parse(raw);
+    return Array.isArray(items)
+      ? items.filter((i): i is TemplateItem => Number.isInteger(i?.foodId) && isValidGrams(i?.grams))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** API shape (frontend `MealTemplate`): items enriched from the catalog; foods no longer visible are dropped. */
+async function serializeTemplates(userId: number, templates: MealTemplate[]) {
+  const parsed = templates.map((t) => ({ t, items: parseTemplateItems(t.items) }));
+  const ids = [...new Set(parsed.flatMap((p) => p.items.map((i) => i.foodId)))];
+  const foods = new Map(
+    (await prisma.food.findMany({ where: { id: { in: ids }, ...visibleTo(userId) } })).map((f) => [f.id, f]),
+  );
+  return parsed.map(({ t, items }) => {
+    const rows = items.flatMap((i) => {
+      const food = foods.get(i.foodId);
+      return food ? [{ foodId: i.foodId, name: food.name, grams: i.grams, macros: scaleMacros(food, i.grams) }] : [];
+    });
+    return {
+      id: t.id,
+      name: t.name,
+      meal: isMeal(t.meal) ? t.meal : null,
+      items: rows.map((r) => ({ foodId: r.foodId, name: r.name, grams: r.grams, kcal: r.macros.kcal })),
+      totals: sumMacros(rows.map((r) => r.macros)),
+    };
+  });
 }
 
 export async function nutritionRoutes(app: FastifyInstance) {
@@ -315,10 +366,8 @@ export async function nutritionRoutes(app: FastifyInstance) {
 
     let data;
     if (b.foodId !== undefined) {
-      const food = await prisma.food.findFirst({ where: { id: b.foodId, ...visibleTo(userId) } });
-      if (!food) return reply.status(404).send({ error: 'Food not found' });
-      data = { foodId: food.id, name: food.name, ...scaleMacros(food, b.grams) };
-      await prisma.food.update({ where: { id: food.id }, data: { usageCount: { increment: 1 } } });
+      data = Number.isInteger(b.foodId) ? await foodSnapshot(userId, b.foodId, b.grams) : null;
+      if (!data) return reply.status(404).send({ error: 'Food not found' });
     } else {
       if (typeof b.name !== 'string' || !b.name.trim()) {
         return reply.status(400).send({ error: 'foodId or name is required' });
@@ -428,6 +477,114 @@ export async function nutritionRoutes(app: FastifyInstance) {
           }),
         );
       }
+      return created.map(serializeEntry);
+    },
+  );
+
+  // ─── Meal templates («Мой завтрак») ─────────────────────────────────────────
+
+  app.get('/nutrition/meal-templates', async (request) => {
+    const userId = (request as any).user.userId;
+    const templates = await prisma.mealTemplate.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+    return serializeTemplates(userId, templates);
+  });
+
+  /** `{name, meal?, items:[{foodId, grams}]}` or `{name, fromDate, fromMeal}` (that meal's catalog entries). */
+  app.post<{
+    Body: { name?: string; meal?: string | null; items?: unknown; fromDate?: string; fromMeal?: string };
+  }>('/nutrition/meal-templates', async (request, reply) => {
+    const userId = (request as any).user.userId;
+    const b = request.body ?? {};
+    const name = typeof b.name === 'string' ? b.name.trim() : '';
+    if (!name || name.length > TEMPLATE_NAME_MAX) {
+      return reply.status(400).send({ error: `name is required, at most ${TEMPLATE_NAME_MAX} characters` });
+    }
+
+    let meal: Meal | null;
+    let items: TemplateItem[];
+    const fromDay = b.fromDate !== undefined || b.fromMeal !== undefined;
+    if (fromDay) {
+      const from = parseDay(b.fromDate);
+      if (!from) return reply.status(400).send({ error: 'fromDate must be YYYY-MM-DD' });
+      if (!isMeal(b.fromMeal)) return reply.status(400).send({ error: `fromMeal must be one of ${MEALS.join(', ')}` });
+      meal = b.fromMeal;
+      const entries = await prisma.foodLogEntry.findMany({
+        where: { userId, date: from, meal: b.fromMeal, foodId: { not: null } },
+        orderBy: { createdAt: 'asc' },
+      });
+      items = entries.map((e) => ({ foodId: e.foodId!, grams: e.grams }));
+    } else {
+      if (b.meal != null && !isMeal(b.meal)) return reply.status(400).send({ error: 'invalid meal' });
+      meal = b.meal ?? null;
+      const raw = b.items;
+      if (!Array.isArray(raw) || !raw.every((i) => Number.isInteger(i?.foodId) && isValidGrams(i?.grams))) {
+        return reply.status(400).send({ error: 'items must be [{foodId, grams 0-5000}]' });
+      }
+      items = (raw as TemplateItem[]).map((i) => ({ foodId: i.foodId, grams: i.grams }));
+    }
+    if (items.length === 0) return reply.status(400).send({ error: 'No catalog foods to save' });
+    if (items.length > MAX_TEMPLATE_ITEMS) {
+      return reply.status(400).send({ error: `At most ${MAX_TEMPLATE_ITEMS} items per template` });
+    }
+    const ids = [...new Set(items.map((i) => i.foodId))];
+    const visible = await prisma.food.count({ where: { id: { in: ids }, ...visibleTo(userId) } });
+    if (visible !== ids.length) return reply.status(404).send({ error: 'Food not found' });
+    if ((await prisma.mealTemplate.count({ where: { userId } })) >= MAX_TEMPLATES) {
+      return reply.status(400).send({ error: `At most ${MAX_TEMPLATES} templates` });
+    }
+
+    const template = await prisma.mealTemplate.create({
+      data: { userId, name, meal, items: JSON.stringify(items) },
+    });
+    track({
+      userId,
+      event: 'meal_template_saved',
+      category: 'miniapp',
+      label: name,
+      metadata: { items: items.length, fromDay },
+    });
+    return (await serializeTemplates(userId, [template]))[0];
+  });
+
+  app.delete<{ Params: { id: string } }>('/nutrition/meal-templates/:id', async (request, reply) => {
+    const userId = (request as any).user.userId;
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id)) return reply.status(404).send({ error: 'Template not found' });
+    const { count } = await prisma.mealTemplate.deleteMany({ where: { id, userId } });
+    if (count === 0) return reply.status(404).send({ error: 'Template not found' });
+    return { success: true };
+  });
+
+  /** Adds every (still visible) item as a diary entry, exactly like POST /log with foodId. Returns the created entries. */
+  app.post<{ Params: { id: string }; Body: { date?: string; meal?: string } }>(
+    '/nutrition/meal-templates/:id/apply',
+    async (request, reply) => {
+      const userId = (request as any).user.userId;
+      const id = Number(request.params.id);
+      const template = Number.isInteger(id) ? await prisma.mealTemplate.findFirst({ where: { id, userId } }) : null;
+      if (!template) return reply.status(404).send({ error: 'Template not found' });
+      const { date: dateStr, meal } = request.body ?? {};
+      const date = parseDay(dateStr);
+      if (!date) return reply.status(400).send({ error: 'date must be YYYY-MM-DD' });
+      if (!isMeal(meal)) return reply.status(400).send({ error: `meal must be one of ${MEALS.join(', ')}` });
+
+      const created = [];
+      for (const item of parseTemplateItems(template.items)) {
+        const data = await foodSnapshot(userId, item.foodId, item.grams);
+        if (!data) continue;
+        created.push(
+          await prisma.foodLogEntry.create({
+            data: { userId, date, meal, grams: item.grams, source: 'manual', ...data },
+          }),
+        );
+      }
+      track({
+        userId,
+        event: 'meal_template_applied',
+        category: 'miniapp',
+        label: template.name,
+        metadata: { templateId: template.id, entries: created.length },
+      });
       return created.map(serializeEntry);
     },
   );

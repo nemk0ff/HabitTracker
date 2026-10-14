@@ -43,3 +43,8 @@ export function validateInitData(initData: string, botToken: string): TelegramUs
     return null;
   }
 }
+
+/** `start_param` (the `startapp` deep-link payload) of initData. Only trust it after `validateInitData` passed. */
+export function initDataStartParam(initData: string): string | null {
+  return new URLSearchParams(initData).get('start_param');
+}

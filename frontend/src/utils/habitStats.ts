@@ -1,6 +1,6 @@
 import { differenceInCalendarDays, parseISO, startOfWeek } from 'date-fns';
 import { calculateStreak, shiftDate, toDateString } from './dates';
-import { doneEntries, neededForWeek, skippedDates } from './habits';
+import { doneEntries, isDoneValue, neededForWeek, skippedDates } from './habits';
 import type { Habit } from '../types';
 
 /** Pure per-habit numbers for the Progress card. `today` is a local YYYY-MM-DD. */
@@ -92,4 +92,49 @@ export function metWeekStarts(h: Habit): Set<string> {
 /** 7 → «7», 7.5 → «7,5» (one decimal at most, Russian comma). */
 export function formatNumber(n: number): string {
   return (Math.round(n * 10) / 10).toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+}
+
+export interface ChallengeProgress {
+  /** Done days since the start (skips don't count). Capped at `total`. */
+  done: number;
+  total: number;
+  /** Day of the challenge, 1-based («День 14 из 30»); skipped days don't advance it. Capped at `total`. */
+  dayIndex: number;
+  /** Last day the challenge can still be completed: start + total − 1, pushed back by each skipped day. */
+  deadline: string;
+  /** Succeeded, or the deadline has passed. */
+  finished: boolean;
+  succeeded: boolean;
+}
+
+/**
+ * Progress of a challenge habit (null for a plain habit). A challenge is `challengeDays` done
+ * days counted from `challengeStart`; a pass (ill / vacation) is not a done day but moves the
+ * deadline by a day, so a sick day doesn't sink a 30-day challenge.
+ */
+export function challengeProgress(
+  h: Pick<Habit, 'challengeDays' | 'challengeStart' | 'entries' | 'measure' | 'dailyTarget'>,
+  today: string,
+): ChallengeProgress | null {
+  if (!h.challengeDays || !h.challengeStart) return null;
+  const start = h.challengeStart;
+  const total = h.challengeDays;
+  let skipped = 0;
+  let done = 0;
+  for (const e of h.entries) {
+    if (e.date < start || e.date > today) continue; // same window as the backend's challengeProgress
+    if (e.skipped) skipped++;
+    else if (isDoneValue(h, e.value)) done++;
+  }
+  const deadline = shiftDate(start, total - 1 + skipped);
+  const succeeded = done >= total;
+  const elapsed = differenceInCalendarDays(parseISO(today), parseISO(start)) + 1;
+  return {
+    done: Math.min(done, total),
+    total,
+    dayIndex: Math.max(1, Math.min(elapsed - skipped, total)),
+    deadline,
+    finished: succeeded || today > deadline,
+    succeeded,
+  };
 }

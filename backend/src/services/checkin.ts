@@ -17,6 +17,7 @@ import { forEachSafe } from '../utils/safe.js';
 import { sendToUser } from './messaging.js';
 import {
   addDays,
+  challengeProgress,
   countTarget,
   datesByHabit,
   dayDate,
@@ -64,6 +65,9 @@ export interface CheckinHabit {
   timeOfDay: string | null;
   sortOrder: number;
   createdAt: Date;
+  /** Challenge: done days to reach from `challengeStart` (local YYYY-MM-DD); null/absent = not a challenge. */
+  challengeDays?: number | null;
+  challengeStart?: string | null;
 }
 
 export interface CheckinEntry {
@@ -111,6 +115,12 @@ export function checkinHabitsFor<T extends Pick<CheckinHabit, 'timeOfDay'>>(
 }
 
 const label = (h: CheckinHabit) => (h.icon ? `${h.icon} ${h.name}` : h.name);
+
+/** Button label: the habit plus « · 12/30» for a challenge. */
+function buttonLabel(h: CheckinHabit, entries: CheckinEntry[], date: string): string {
+  const p = challengeProgress(h, entries, date);
+  return p ? `${label(h)} · ${p.done}/${p.total}` : label(h);
+}
 
 function fmtHours(minutes: number): string {
   const h = minutes / 60;
@@ -161,9 +171,10 @@ export function buildCheckinMessage(
     const value = today.get(h.id);
     const skipped = skippedToday.has(h.id);
     const cb = (v: number) => `ci:${h.id}:${date}:${v}${suffix}`;
+    const name = buttonLabel(h, entries, date);
     if (h.measure === 'hours') {
       // Header shows the recorded amount; tapping it clears the mark (a skipped one asks for the hours instead).
-      const head = skipped ? `⏸ ${label(h)}` : value ? `✅ ${label(h)} · ${fmtHours(value)}` : `▫️ ${label(h)}`;
+      const head = skipped ? `⏸ ${name}` : value ? `✅ ${name} · ${fmtHours(value)}` : `▫️ ${name}`;
       keyboard.push([{ text: head, callback_data: cb(0) }]);
       keyboard.push(
         HOURS_OPTIONS.map((hours) => {
@@ -178,16 +189,16 @@ export function buildCheckinMessage(
       const n = value ?? 0;
       keyboard.push([
         skipped
-          ? { text: `⏸ ${label(h)}`, callback_data: cb(target) }
-          : { text: `${isDone(h, n) ? '✅' : '▫️'} ${label(h)} ${n}/${target}`, callback_data: cb(n ? 0 : PLUS_ONE) },
+          ? { text: `⏸ ${name}`, callback_data: cb(target) }
+          : { text: `${isDone(h, n) ? '✅' : '▫️'} ${name} ${n}/${target}`, callback_data: cb(n ? 0 : PLUS_ONE) },
         { text: '+1', callback_data: cb(PLUS_ONE) },
         { text: `✅ ${target}`, callback_data: cb(target) },
       ]);
     } else {
       keyboard.push([
         skipped
-          ? { text: `⏸ ${label(h)}`, callback_data: cb(1) }
-          : { text: `${value ? '✅' : '▫️'} ${label(h)}`, callback_data: cb(value ? 0 : 1) },
+          ? { text: `⏸ ${name}`, callback_data: cb(1) }
+          : { text: `${value ? '✅' : '▫️'} ${name}`, callback_data: cb(value ? 0 : 1) },
       ]);
     }
   }

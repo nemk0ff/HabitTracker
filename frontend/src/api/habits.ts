@@ -17,6 +17,10 @@ export interface CreateHabitData {
   timeOfDay?: TimeOfDay | null;
   /** Count habits only, 1–99. */
   dailyTarget?: number | null;
+  /** Challenge length in done days (3–365); null = a plain habit. */
+  challengeDays?: number | null;
+  /** Local YYYY-MM-DD the challenge starts (today when created). */
+  challengeStart?: string | null;
 }
 
 export interface UpdateHabitData {
@@ -28,6 +32,9 @@ export interface UpdateHabitData {
   timeOfDay?: TimeOfDay | null;
   dailyTarget?: number | null;
   archived?: boolean;
+  /** null ends the challenge and keeps the habit going. */
+  challengeDays?: number | null;
+  challengeStart?: string | null;
 }
 
 export function createHabit(data: CreateHabitData): Promise<Habit> {

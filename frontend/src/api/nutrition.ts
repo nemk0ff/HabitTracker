@@ -4,6 +4,7 @@ import type {
   FoodDay,
   FoodLogEntry,
   Meal,
+  MealTemplate,
   NutritionGoal,
   NutritionStats,
   Plan,
@@ -110,6 +111,29 @@ export function deleteLogEntry(id: number): Promise<void> {
 
 export function copyDay(fromDate: string, toDate: string, meal?: Meal): Promise<FoodLogEntry[]> {
   return api<FoodLogEntry[]>(`${BASE}/log/copy`, json('POST', { fromDate, toDate, meal }));
+}
+
+// ─── Meal templates («наборы») ────────────────────────────────────────────────
+
+export function fetchMealTemplates(): Promise<MealTemplate[]> {
+  return api<MealTemplate[]>(`${BASE}/meal-templates`);
+}
+
+export type MealTemplateInput =
+  | { name: string; meal?: Meal | null; items: { foodId: number; grams: number }[] }
+  | { name: string; fromDate: string; fromMeal: Meal };
+
+export function createMealTemplate(data: MealTemplateInput): Promise<MealTemplate> {
+  return api<MealTemplate>(`${BASE}/meal-templates`, json('POST', data));
+}
+
+export function deleteMealTemplate(id: number): Promise<void> {
+  return api<void>(`${BASE}/meal-templates/${id}`, { method: 'DELETE' });
+}
+
+/** Logs every item of the template into (date, meal); returns the created entries. */
+export function applyMealTemplate(id: number, date: string, meal: Meal): Promise<FoodLogEntry[]> {
+  return api<FoodLogEntry[]>(`${BASE}/meal-templates/${id}/apply`, json('POST', { date, meal }));
 }
 
 // ─── "Добавить текстом" via the Hermes agent (developer only) ─────────────────

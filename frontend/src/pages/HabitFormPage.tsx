@@ -6,8 +6,10 @@ import { useNavStore } from '../stores/navStore';
 import { ColorPicker } from '../components/ColorPicker';
 import { EmojiPicker } from '../components/EmojiPicker';
 import { HABIT_COLORS, readableOn } from '../utils/colors';
-import { HABIT_TEMPLATES, type HabitTemplate } from '../utils/habitTemplates';
-import { TIME_OF_DAY } from '../utils/habits';
+import { CHALLENGE_PRESETS, CHALLENGE_TEMPLATES, clampChallengeDays, HABIT_TEMPLATES, type HabitTemplate } from '../utils/habitTemplates';
+import { Switch } from '../components/NotificationSheet';
+import { toDateString } from '../utils/dates';
+import { pluralDays, TIME_OF_DAY } from '../utils/habits';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import type { Habit, TimeOfDay } from '../types';
 
@@ -27,6 +29,11 @@ function kindOf(h: Pick<Habit, 'measure' | 'binary'>): Kind {
   if (h.measure === 'hours') return 'hours';
   if (h.measure === 'count') return 'count';
   return h.binary ? 'check' : 'levels';
+}
+
+/** «9 окт.» for the challenge hint. */
+function formatStart(date: string): string {
+  return new Date(`${date}T00:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 }
 
 const clampTarget = (n: number) => Math.min(99, Math.max(1, Math.round(n) || 1));
@@ -53,6 +60,10 @@ export function HabitFormPage() {
   const [weeklyTarget, setWeeklyTarget] = useState<number | null>(existing?.weeklyTarget ?? null);
   const [saving, setSaving] = useState(false);
   const [templateKey, setTemplateKey] = useState<string | null>(null);
+  // Challenge: N done days from the start date; null = a plain open-ended habit.
+  const [challengeDays, setChallengeDays] = useState<number | null>(
+    existing?.challengeDays ? clampChallengeDays(existing.challengeDays) : null,
+  );
 
   const count = kind === 'count';
   // The frequency goal applies to check / levels habits only.
@@ -71,12 +82,23 @@ export function HabitFormPage() {
     if (!name.trim() || saving) return;
     setSaving(true);
     try {
+      const today = toDateString(new Date());
+      // A new challenge starts today; changing the length of a running one keeps its start.
+      const challenge =
+        challengeDays === null
+          ? existing?.challengeDays
+            ? { challengeDays: null, challengeStart: null }
+            : {}
+          : challengeDays !== existing?.challengeDays
+            ? { challengeDays, challengeStart: existing?.challengeDays ? existing.challengeStart ?? today : today }
+            : {};
       const common = {
         name: name.trim(),
         color,
         icon: icon || undefined,
         timeOfDay,
         weeklyTarget: hasFrequency ? weeklyTarget : null,
+        ...challenge,
       };
       const ok =
         isEdit && selectedHabitId
@@ -113,6 +135,7 @@ export function HabitFormPage() {
     if (t.dailyTarget) setDailyTarget(t.dailyTarget);
     setWeeklyTarget(t.weeklyTarget);
     setTimeOfDay(t.timeOfDay);
+    setChallengeDays(t.challengeDays ? clampChallengeDays(t.challengeDays) : null);
   };
 
   useBackButton(back);
@@ -155,6 +178,32 @@ export function HabitFormPage() {
                   >
                     <span aria-hidden>{t.icon}</span>
                     {t.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-sm font-semibold text-tg-text mt-4 mb-2 px-4">Челленджи</p>
+            <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: 'none' }}>
+              {CHALLENGE_TEMPLATES.map((t) => {
+                const on = templateKey === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => applyTemplate(t)}
+                    aria-pressed={on}
+                    className="shrink-0 min-h-[44px] px-3.5 rounded-full text-sm font-medium flex items-center gap-1.5 transition-colors"
+                    style={
+                      on
+                        ? { backgroundColor: t.color, color: readableOn(t.color) }
+                        : { backgroundColor: 'var(--tg-theme-section-bg-color)', color: 'var(--tg-theme-text-color)' }
+                    }
+                  >
+                    <span aria-hidden>{t.icon}</span>
+                    {t.name}
+                    <span className="text-xs tabular-nums" style={{ opacity: 0.7 }}>
+                      {t.challengeDays} дн.
+                    </span>
                   </button>
                 );
               })}
@@ -354,6 +403,57 @@ export function HabitFormPage() {
             </div>
           </div>
         )}
+
+        {/* Challenge: a goal with an end — «12/30» on the tile, a celebration at the finish */}
+        <div className="mb-6">
+          <div className="bg-tg-section rounded-2xl pl-4 pr-1 py-1">
+            <div className="flex items-center gap-3 min-h-[52px]">
+              <span className="flex-1">
+                <span id="challenge-label" className="block text-sm font-medium text-tg-text">
+                  Сделать челленджем
+                </span>
+                <span id="challenge-hint" className="block text-xs text-tg-hint mt-0.5">
+                  {challengeDays === null
+                    ? 'Цель с финишем: например, 30 дней без сахара'
+                    : existing?.challengeDays && existing.challengeStart
+                      ? `Нужно отметить ${pluralDays(challengeDays)}, отсчёт с ${formatStart(existing.challengeStart)}`
+                      : `Нужно отметить ${pluralDays(challengeDays)}, старт сегодня`}
+                </span>
+              </span>
+              <Switch
+                checked={challengeDays !== null}
+                onChange={(on) => setChallengeDays(on ? clampChallengeDays(existing?.challengeDays ?? 30) : null)}
+                color={color}
+                labelledBy="challenge-label"
+                describedBy="challenge-hint"
+              />
+            </div>
+            {challengeDays !== null && (
+              <div className="flex gap-1.5 pr-3 pb-3 pt-1" role="radiogroup" aria-label="Длина челленджа">
+                {CHALLENGE_PRESETS.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    role="radio"
+                    aria-checked={challengeDays === n}
+                    onClick={() => {
+                      haptic('select');
+                      setChallengeDays(n);
+                    }}
+                    className="flex-1 min-h-[44px] rounded-xl text-sm font-semibold tabular-nums transition-colors"
+                    style={
+                      challengeDays === n
+                        ? selectedStyle
+                        : { backgroundColor: 'var(--tg-theme-secondary-bg-color)', color: 'var(--tg-theme-text-color)' }
+                    }
+                  >
+                    {n} дн.
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Preview */}
         <div className="mb-6">

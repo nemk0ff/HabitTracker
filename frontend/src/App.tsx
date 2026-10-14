@@ -5,6 +5,7 @@ import { useHabitsStore } from './stores/habitsStore';
 import { useNavStore } from './stores/navStore';
 import { TodayPage } from './pages/TodayPage';
 import { Toaster } from './components/Toaster';
+import { ChallengeCelebration } from './components/ChallengeCelebration';
 import { HomePage } from './pages/HomePage';
 import { HabitDetailPage } from './pages/HabitDetailPage';
 import { HabitFormPage } from './pages/HabitFormPage';
@@ -143,6 +144,7 @@ export default function App() {
       {screen === 'food-suggest' && <FoodSuggestPage key="food-suggest" />}
     </AnimatePresence>
     <Toaster />
+    {user && <ChallengeCelebration />}
     </>
   );
 }

@@ -26,6 +26,9 @@ export interface Habit {
   /** Manual order on Today / Progress (ascending), then createdAt. */
   sortOrder: number;
   archived: boolean;
+  /** Challenge: reach `challengeDays` done days counting from `challengeStart` (local YYYY-MM-DD). Null = not a challenge. */
+  challengeDays: number | null;
+  challengeStart: string | null;
   createdAt: string;
   entries: HabitEntry[];
 }
@@ -194,4 +197,20 @@ export interface Plan {
   sleepLastNightH: number | null;
   sleepAvg7H: number | null;
   insights: Insight[];
+}
+
+/** A saved set of foods added in one tap («Мой завтрак»). */
+export interface MealTemplate {
+  id: number;
+  name: string;
+  /** Suggested meal slot, null = any. */
+  meal: Meal | null;
+  items: { foodId: number; name: string; grams: number; kcal: number }[];
+  totals: { kcal: number; protein: number; fat: number; carbs: number };
+}
+
+export interface InviteInfo {
+  /** t.me/<bot>?start=ref_<userId>: opens the bot chat; Start registers the referral. */
+  link: string;
+  invitedCount: number;
 }

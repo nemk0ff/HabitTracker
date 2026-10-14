@@ -7,6 +7,7 @@ import {
   addDays,
   dailyStreak,
   datesByHabit,
+  challengeProgress,
   dayDate,
   setHabitEntry,
   skippedByHabit,
@@ -127,6 +128,19 @@ try {
   r = await handleCheckinCallback(telegramId, `ci:${yoga.id}:${today}:1`);
   console.log(`\ntap ⏸ Йога → ${r.answer}; entry =`, JSON.stringify(await entryOf(yoga.id)), '(expect value 1, skipped false)');
   if (r.message) show('evening after unskip (no Вода)', r.message);
+
+  // ── Challenge: « · N/30» = done days since challengeStart; skips and days before the start don't count ──
+  const run = await prisma.habit.create({
+    data: { userId: user.id, name: 'Бег', icon: '🏃', binary: true, challengeDays: 30, challengeStart: addDays(today, -4) },
+  });
+  await setHabitEntry(run, dayDate(addDays(today, -6)), 1); // before the start
+  for (const i of [1, 2, 4]) await setHabitEntry(run, dayDate(addDays(today, -i)), 1);
+  await setHabitEntry(run, dayDate(addDays(today, -3)), 0, true); // skipped
+  const runEntries = await prisma.habitEntry.findMany({ where: { habitId: run.id } });
+  console.log('\nБег challenge progress =', JSON.stringify(challengeProgress(run, runEntries, today)), '(expect {"done":3,"total":30})');
+  r = await handleCheckinCallback(telegramId, `ci:${run.id}:${today}:1`);
+  const runButton = r.message?.keyboard.flat().find((b) => b.callback_data?.startsWith(`ci:${run.id}:`));
+  console.log(`tap Бег → ${r.answer}; button "${runButton?.text}" (expect "✅ 🏃 Бег · 4/30")`);
 
   // ── Closed channel: no API call, settings untouched ──
   const closed = await prisma.user.update({ where: { id: user.id }, data: { canMessage: false } });

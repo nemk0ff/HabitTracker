@@ -1,10 +1,11 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
-import { validateInitData } from '../utils/telegram.js';
+import { initDataStartParam, validateInitData } from '../utils/telegram.js';
 import { signToken } from '../middleware/auth.js';
 import { track } from '../services/analytics.js';
 import { hasAgentLogAccess, hasNutritionAccess } from '../utils/features.js';
 import { isValidTzOffset } from '../utils/safe.js';
+import { resolveReferrer } from '../services/referral.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -41,6 +42,9 @@ export async function authRoutes(app: FastifyInstance) {
     const writeAccess =
       telegramUser.allows_write_to_pm === true && (existing?.canMessage ?? null) === null ? { canMessage: true } : {};
 
+    // «Пригласить друга»: only a first registration is attributed (initData is validated above, dev-mode has none).
+    const referrerId = existing || initData === 'dev-mode' ? null : await resolveReferrer(initDataStartParam(initData), null);
+
     let user = await prisma.user.upsert({
       where: { telegramId: BigInt(telegramUser.id) },
       update: {
@@ -57,6 +61,7 @@ export async function authRoutes(app: FastifyInstance) {
         username: telegramUser.username ?? null,
         ...tz,
         ...writeAccess,
+        ...(referrerId !== null && { referrerId }),
       },
     });
 
@@ -69,6 +74,7 @@ export async function authRoutes(app: FastifyInstance) {
       userId: user.id,
       event: existing ? 'app_open' : 'user_registered',
       category: 'miniapp',
+      ...(!existing && { metadata: { referrerId: user.referrerId } }),
     });
 
     const token = signToken({

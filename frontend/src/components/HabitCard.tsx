@@ -6,7 +6,8 @@ import { toDateString } from '../utils/dates';
 import { countTarget } from '../utils/habitActions';
 import { useNavStore } from '../stores/navStore';
 import { formatHours, isCountHabit, isDoneValue, isHoursHabit, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
-import { averageValue, completionRate, formatNumber, habitStartDate, metWeekStarts, streaks, valueOn } from '../utils/habitStats';
+import { ChallengeBar } from './ChallengeCelebration';
+import { averageValue, challengeProgress, completionRate, formatNumber, habitStartDate, metWeekStarts, streaks, valueOn } from '../utils/habitStats';
 import { readableOn, legibleColor, useIsDark } from '../utils/colors';
 import type { Habit } from '../types';
 
@@ -105,6 +106,7 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
   const heatEntries = useMemo(() => levelEntries(habit), [habit]);
   const metWeeks = useMemo(() => (habit.weeklyTarget ? metWeekStarts(habit) : undefined), [habit]);
   const startDate = useMemo(() => habitStartDate(habit), [habit]);
+  const challenge = useMemo(() => challengeProgress(habit, todayStr), [habit, todayStr]);
 
   const accentText = legibleColor(habit.color, isDark);
   const onColor = readableOn(habit.color);
@@ -168,6 +170,20 @@ export const HabitCard = memo(function HabitCard({ habit, readOnly = false }: Pr
         </TodayChip>
         {!readOnly && <ChevronRight size={18} className="text-tg-hint -mr-1 shrink-0" aria-hidden />}
       </div>
+
+      {challenge && (
+        <div className="mt-3" aria-label={`Челлендж: ${challenge.done} из ${challenge.total}`}>
+          <div className="flex items-baseline justify-between text-xs mb-1.5">
+            <span className="text-tg-hint">
+              {challenge.succeeded ? '🏆 Челлендж пройден' : challenge.finished ? 'Челлендж не завершён' : `Челлендж · день ${challenge.dayIndex}`}
+            </span>
+            <span className="font-semibold tabular-nums" style={{ color: accentText }}>
+              {challenge.done}/{challenge.total}
+            </span>
+          </div>
+          <ChallengeBar done={challenge.done} total={challenge.total} color={habit.color} />
+        </div>
+      )}
 
       {/* Body: stats on the left, history fills the rest */}
       <div className="mt-3 flex items-start gap-3">

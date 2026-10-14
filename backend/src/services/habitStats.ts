@@ -246,3 +246,24 @@ export function skippedByHabit(entries: { habitId: number; date: Date; skipped?:
   }
   return map;
 }
+
+/**
+ * Challenge progress as of `date`: done days (`isDone`; skipped days don't count) from `challengeStart`
+ * through `date`, capped at `challengeDays`. Same count as the client's `challengeProgress`
+ * (frontend/src/utils/habitStats.ts). Null for a habit without a challenge.
+ */
+export function challengeProgress(
+  h: DoneHabit & { id: number; challengeDays?: number | null; challengeStart?: string | null },
+  entries: { habitId: number; date: Date; value: number; skipped?: boolean }[],
+  date: string,
+): { done: number; total: number } | null {
+  if (!h.challengeDays || !h.challengeStart) return null;
+  const from = dayDate(h.challengeStart).getTime();
+  const to = dayDate(date).getTime();
+  let done = 0;
+  for (const e of entries) {
+    const t = e.date.getTime();
+    if (e.habitId === h.id && t >= from && t <= to && isDone(h, e.value, e.skipped)) done++;
+  }
+  return { done: Math.min(done, h.challengeDays), total: h.challengeDays };
+}

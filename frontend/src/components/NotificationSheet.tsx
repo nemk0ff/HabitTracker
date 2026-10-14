@@ -210,7 +210,7 @@ export function NotificationSheet({ open, onClose, reminder, onSave, color }: Pr
 }
 
 /** iOS-style switch: role="switch", 44px hit area, off track ≥3:1 (`--switch-off`). */
-function Switch({
+export function Switch({
   checked,
   onChange,
   color,

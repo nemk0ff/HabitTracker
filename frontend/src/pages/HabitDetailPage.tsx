@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, BellOff, ChevronRight, Pencil } from 'lucide-react';
+import { Bell, BellOff, ChevronRight, Pencil, Share2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
@@ -11,7 +11,9 @@ import { NotificationSheet, utcTimeToLocal } from '../components/NotificationShe
 import { fetchReminder, saveReminder } from '../api/habits';
 import { HoursSheet } from '../components/HoursSheet';
 import { formatHours, isCountHabit, isHoursHabit, isReturningUser, isSkippedOn, levelEntries, weekProgress, weeklyStreak } from '../utils/habits';
-import { averageValue, formatNumber, streaks, valueOn } from '../utils/habitStats';
+import { averageValue, challengeProgress, formatNumber, streaks, valueOn } from '../utils/habitStats';
+import { shareHabitProgress } from '../utils/shareCard';
+import { ChallengeBar } from '../components/ChallengeCelebration';
 import { toDateString } from '../utils/dates';
 import { HabitDaySheet } from '../components/HabitDaySheet';
 import { SleepChart } from '../components/SleepChart';
@@ -20,7 +22,7 @@ import { MonthSummary } from '../components/MonthSummary';
 import { monthSummary } from '../utils/habitInsights';
 import { countTarget, setHabitSkipped, setHabitValue } from '../utils/habitActions';
 import { ensureWriteAccess } from '../utils/writeAccess';
-import type { Reminder, DayOfWeek } from '../types';
+import type { Habit, Reminder, DayOfWeek } from '../types';
 
 const HOURS_LEVEL_LABELS = ['меньше 5 ч', '5–7 ч', '7+ ч'];
 
@@ -36,6 +38,7 @@ export function HabitDetailPage() {
   const [reminder, setReminder] = useState<Reminder | null>(null);
   const [hoursDate, setHoursDate] = useState<string | null>(null);
   const [dayDate, setDayDate] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
 
   const loadReminder = useCallback(async () => {
     if (!selectedHabitId) return;
@@ -110,6 +113,14 @@ export function HabitDetailPage() {
   const returning = isReturningUser(allHabits, today);
   const visibleStats = returning ? stats.filter((s) => !(s.streak && s.value === 0)) : stats;
 
+  const share = async () => {
+    if (sharing) return;
+    haptic('light');
+    setSharing(true);
+    await shareHabitProgress(habit);
+    setSharing(false);
+  };
+
   const handleDelete = async () => {
     await removeHabit(habit.id);
     haptic('warning');
@@ -176,6 +187,18 @@ export function HabitDetailPage() {
           </span>
           <ChevronRight size={16} className="text-tg-hint" aria-hidden />
         </button>
+
+        <button
+          onClick={() => void share()}
+          disabled={sharing}
+          className="w-full min-h-[48px] px-4 -mt-3 mb-5 rounded-2xl bg-tg-section flex items-center gap-3 text-left active:opacity-70 disabled:opacity-60 transition-opacity"
+        >
+          <Share2 size={18} strokeWidth={1.5} style={{ color: habit.color }} aria-hidden />
+          <span className="flex-1 text-sm text-tg-text">{sharing ? 'Готовлю картинку…' : 'Поделиться прогрессом'}</span>
+          <span className="text-xs text-tg-hint">картинка в чат</span>
+        </button>
+
+        <ChallengeBlock habit={habit} today={today} />
 
         <MonthSummary habit={habit} today={today} />
 
@@ -299,5 +322,63 @@ export function HabitDetailPage() {
         color={habit.color}
       />
     </motion.div>
+  );
+}
+
+/** Challenge state on the habit screen: day N of M, a bar, and what to do once it's over. */
+function ChallengeBlock({ habit, today }: { habit: Habit; today: string }) {
+  const editHabit = useHabitsStore((s) => s.editHabit);
+  const [busy, setBusy] = useState(false);
+  const ch = challengeProgress(habit, today);
+  if (!ch) return null;
+
+  const update = async (data: { challengeDays: number | null; challengeStart: string | null }) => {
+    if (busy) return;
+    setBusy(true);
+    if (await editHabit(habit.id, data)) haptic('success');
+    setBusy(false);
+  };
+  const keepGoing = () => update({ challengeDays: null, challengeStart: null });
+  const restart = () => update({ challengeDays: ch.total, challengeStart: today });
+
+  const left = ch.total - ch.done;
+  const title = ch.succeeded ? '🏆 Челлендж пройден' : ch.finished ? 'Время челленджа вышло' : `День ${ch.dayIndex} из ${ch.total}`;
+  const sub = ch.succeeded
+    ? `Отмечено ${ch.done} из ${ch.total}`
+    : ch.finished
+      ? `Отмечено ${ch.done} из ${ch.total} — можно начать заново`
+      : `Отмечено ${ch.done} · осталось ${left}`;
+
+  return (
+    <section className="bg-tg-section rounded-2xl p-4 mb-5" aria-label="Челлендж">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-base font-semibold text-tg-text">{title}</h2>
+        <span className="font-display text-lg tabular-nums" style={{ color: habit.color }}>
+          {ch.done}/{ch.total}
+        </span>
+      </div>
+      <p className="text-sm text-tg-hint mt-0.5 mb-3">{sub}</p>
+      <ChallengeBar done={ch.done} total={ch.total} color={habit.color} className="!h-[6px]" />
+      {ch.finished && (
+        <div className="flex gap-2 mt-4">
+          {!ch.succeeded && (
+            <button
+              onClick={() => void restart()}
+              disabled={busy}
+              className="flex-1 min-h-[44px] rounded-xl text-sm font-semibold bg-tg-secondary text-tg-text active:opacity-70 disabled:opacity-60"
+            >
+              Начать заново
+            </button>
+          )}
+          <button
+            onClick={() => void keepGoing()}
+            disabled={busy}
+            className="flex-1 min-h-[44px] rounded-xl text-sm font-semibold bg-tg-secondary text-tg-text active:opacity-70 disabled:opacity-60"
+          >
+            Продолжить как привычку
+          </button>
+        </div>
+      )}
+    </section>
   );
 }

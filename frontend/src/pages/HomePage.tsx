@@ -7,6 +7,8 @@ import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { Archive, ArrowDown, ArrowUp, ChevronDown, ChevronRight, RotateCcw, Settings } from 'lucide-react';
 import { HabitCard } from '../components/HabitCard';
+import { AchievementsShelf } from '../components/AchievementsShelf';
+import { useToday } from '../hooks/useToday';
 import { sortHabits } from '../utils/habits';
 import { useBackButton, useMainButton, haptic } from '../hooks/useTelegramButtons';
 import type { Habit } from '../types';
@@ -20,6 +22,7 @@ export function HomePage() {
   const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
   const checkinTime = useAuthStore((s) => s.user?.checkinTime ?? null);
 
+  const today = useToday();
   const [editRequested, setEditing] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
@@ -139,6 +142,8 @@ export function HomePage() {
             </AnimatePresence>
           </div>
         )}
+
+        {!editing && habits.length > 0 && <AchievementsShelf habits={habits} today={today} />}
 
         {archived.length > 0 && (
           <section className="mt-6">

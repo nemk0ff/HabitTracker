@@ -1,5 +1,6 @@
 import { addDays, differenceInCalendarDays, parseISO, startOfWeek, subWeeks } from 'date-fns';
 import { toDateString } from './dates';
+import { pluralForm } from './plural';
 import { habitStartDate } from './habitStats';
 import type { Habit, HabitEntry, TimeOfDay } from '../types';
 
@@ -197,11 +198,7 @@ export function skipHatch(color: string, line = 2, gap = 4): string {
 
 /** 1 день · 2 дня · 5 дней */
 export function pluralDays(n: number): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return `${n} день`;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} дня`;
-  return `${n} дней`;
+  return `${n} ${pluralForm(n, 'день', 'дня', 'дней')}`;
 }
 
 /**

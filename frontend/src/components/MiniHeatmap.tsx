@@ -256,6 +256,8 @@ declare global {
         isVersionAtLeast?: (version: string) => boolean;
         /** Bot API 6.9+: asks the user to let the bot message them. */
         requestWriteAccess?: (cb?: (granted: boolean) => void) => void;
+        /** Opens a t.me link inside Telegram (share sheet for t.me/share/url). */
+        openTelegramLink?: (url: string) => void;
       };
     };
   }

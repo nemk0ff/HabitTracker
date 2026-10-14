@@ -4,7 +4,8 @@ import { ChevronRight, Pause } from 'lucide-react';
 import { haptic } from '../hooks/useTelegramButtons';
 import { readableOn } from '../utils/colors';
 import { formatHours, isCountHabit, isDoneValue, isHoursHabit, isSkippedOn, pluralDays, weekProgress } from '../utils/habits';
-import { streaks } from '../utils/habitStats';
+import { challengeProgress, streaks } from '../utils/habitStats';
+import { ChallengeBar } from './ChallengeCelebration';
 import { countTarget } from '../utils/habitActions';
 import type { Habit } from '../types';
 
@@ -34,6 +35,7 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen, o
     () => (habit.weeklyTarget ? 0 : streaks(habit).current),
     [habit, date],
   );
+  const challenge = useMemo(() => challengeProgress(habit, date), [habit, date]);
   const label =
     `${habit.name}: ` +
     (skipped
@@ -44,7 +46,7 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen, o
         ? 'отмечено'
         : 'не отмечено') +
     (hours && done ? `, ${formatHours(entry!.value)}` : '') +
-    `. На этой неделе ${week.done} из ${week.needed}` +
+    (challenge ? `. Челлендж: ${challenge.done} из ${challenge.total}` : `. На этой неделе ${week.done} из ${week.needed}`) +
     (streak >= 2 ? `. Серия ${pluralDays(streak)}` : '');
 
   // Long press (450 ms, cancelled by moving the finger) opens the actions sheet (or the habit);
@@ -129,6 +131,15 @@ export const HabitTile = memo(function HabitTile({ habit, date, onTap, onOpen, o
           {skipped ? (
             <span className="flex items-center gap-1 text-xs mt-1 whitespace-nowrap text-tg-hint">
               <Pause size={12} aria-hidden /> пропуск
+            </span>
+          ) : challenge ? (
+            // Challenge: «12/30» and a thin bar instead of the week dots.
+            <span className="block mt-1">
+              <span className="block text-xs font-semibold tabular-nums whitespace-nowrap" style={{ opacity: 0.9 }}>
+                {challenge.succeeded ? '🏆 ' : ''}
+                {challenge.done}/{challenge.total}
+              </span>
+              <ChallengeBar done={challenge.done} total={challenge.total} color={done ? ink : habit.color} className="mt-1" />
             </span>
           ) : habit.weeklyTarget ? (
             <span className="block text-xs mt-1 whitespace-nowrap" style={{ opacity: 0.85 }}>

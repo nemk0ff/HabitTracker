@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import * as api from '../api/nutrition';
 import type { LogInput } from '../api/nutrition';
-import type { Food, FoodDay, FoodLogEntry, Meal, NutritionGoal, Plan } from '../types';
-import { sumMacros } from '../utils/nutrition';
+import type { Food, FoodDay, FoodLogEntry, Meal, MealTemplate, NutritionGoal, Plan } from '../types';
+import { fmt, sumMacros } from '../utils/nutrition';
+import { toast } from './toastStore';
 
 interface NutritionState {
   /** Diary days by YYYY-MM-DD. */
@@ -13,6 +14,9 @@ interface NutritionState {
   goalLoaded: boolean;
   recent: Food[];
   favorites: Food[];
+  /** Meal templates («наборы»); loaded lazily by loadTemplates. */
+  templates: MealTemplate[];
+  templatesLoaded: boolean;
   error: string | null;
 
   loadDay: (date: string) => Promise<void>;
@@ -30,6 +34,12 @@ interface NutritionState {
   copyDay: (fromDate: string, toDate: string, meal?: Meal) => Promise<number>;
   setDayComplete: (date: string, complete: boolean) => Promise<void>;
   setGoal: (goal: NutritionGoal) => Promise<void>;
+  /** Fetches templates once; `force` refetches. */
+  loadTemplates: (force?: boolean) => Promise<void>;
+  saveTemplateFromMeal: (date: string, meal: Meal, name: string) => Promise<MealTemplate | null>;
+  deleteTemplate: (id: number) => Promise<void>;
+  /** Logs the template into (date, meal), shows an undo toast; returns the created entries. */
+  applyTemplate: (id: number, date: string, meal: Meal) => Promise<FoodLogEntry[]>;
 }
 
 function withEntries(day: FoodDay, entries: FoodLogEntry[]): FoodDay {
@@ -61,6 +71,8 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
     goalLoaded: false,
     recent: [],
     favorites: [],
+    templates: [],
+    templatesLoaded: false,
     error: null,
 
     loadDay: async (date) => {
@@ -209,6 +221,67 @@ export const useNutritionStore = create<NutritionState>((set, get) => {
         return 0;
       } finally {
         bumpDay(toDate);
+      }
+    },
+
+    loadTemplates: async (force = false) => {
+      if (get().templatesLoaded && !force) return;
+      try {
+        set({ templates: await api.fetchMealTemplates(), templatesLoaded: true });
+      } catch {
+        // templates are an extra; the screens just don't show them
+      }
+    },
+
+    saveTemplateFromMeal: async (date, meal, name) => {
+      try {
+        const tpl = await api.createMealTemplate({ name, fromDate: date, fromMeal: meal });
+        set((s) => ({ templates: [tpl, ...s.templates.filter((t) => t.id !== tpl.id)] }));
+        return tpl;
+      } catch (e: any) {
+        set({ error: e.message });
+        toast(e.message || 'Не получилось сохранить набор', { tone: 'error' });
+        return null;
+      }
+    },
+
+    deleteTemplate: async (id) => {
+      const prev = get().templates;
+      set({ templates: prev.filter((t) => t.id !== id) });
+      try {
+        await api.deleteMealTemplate(id);
+      } catch (e: any) {
+        set({ templates: prev, error: e.message });
+        toast(e.message || 'Не получилось удалить набор', { tone: 'error' });
+      }
+    },
+
+    applyTemplate: async (id, date, meal) => {
+      const tpl = get().templates.find((t) => t.id === id);
+      bumpDay(date);
+      try {
+        const created = await api.applyMealTemplate(id, date, meal);
+        const ids = new Set(created.map((c) => c.id));
+        patchDay(date, (entries) => [...entries.filter((e) => !ids.has(e.id)), ...created]);
+        const kcal = sumMacros(created).kcal;
+        toast(`Добавлено: ${tpl?.name ?? 'набор'} (${fmt(kcal)} ккал)`, {
+          ms: 6000,
+          actions: [
+            {
+              label: 'Отменить',
+              onClick: () => {
+                for (const entry of created) get().removeEntry(entry);
+              },
+            },
+          ],
+        });
+        return created;
+      } catch (e: any) {
+        set({ error: e.message });
+        toast(e.message || 'Не получилось добавить набор', { tone: 'error' });
+        return [];
+      } finally {
+        bumpDay(date);
       }
     },
 

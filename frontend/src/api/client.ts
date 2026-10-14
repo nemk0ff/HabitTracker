@@ -1,5 +1,15 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '';
 
+/** Failed API call; `status` is the HTTP code. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 let authToken = '';
 
 export function setAuthToken(token: string) {
@@ -26,7 +36,7 @@ export async function api<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new ApiError(body.error || `HTTP ${res.status}`, res.status);
   }
 
   return res.json();

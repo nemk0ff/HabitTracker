@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Apple,
+  BookmarkPlus,
   CalendarDays,
   ChartColumn,
   ChevronLeft,
@@ -24,6 +25,8 @@ import { PortionSheet, type PortionTarget } from '../../components/nutrition/Por
 import { FoodCalendarSheet } from '../../components/nutrition/FoodCalendarSheet';
 import { WeightSheet } from '../../components/nutrition/WeightSheet';
 import { InsightsCard } from '../../components/nutrition/InsightsCard';
+import { SaveTemplateSheet } from '../../components/nutrition/SaveTemplateSheet';
+import { TemplatesHint, markTemplatesHintSeen } from '../../components/nutrition/TemplatesHint';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { capitalizeFirst, shiftDate, toDateString } from '../../utils/dates';
 import { MEALS, fmt, formatDayTitle, mealByTime, mealLabel, sumMacros } from '../../utils/nutrition';
@@ -37,8 +40,27 @@ export function FoodDayPage() {
   );
   const day = useNutritionStore((s) => s.days[date]);
   const plan = useNutritionStore((s) => s.plans[date]);
-  const { loadDay, loadPlan, saveWeight, updateEntry, removeEntry, copyDay, addEntry, setDayComplete } = useNutritionStore(
+  const {
+    loadDay,
+    loadPlan,
+    saveWeight,
+    updateEntry,
+    removeEntry,
+    copyDay,
+    addEntry,
+    setDayComplete,
+    templates,
+    templatesLoaded,
+    loadTemplates,
+    saveTemplateFromMeal,
+    applyTemplate,
+  } = useNutritionStore(
     useShallow((s) => ({
+      templates: s.templates,
+      templatesLoaded: s.templatesLoaded,
+      loadTemplates: s.loadTemplates,
+      saveTemplateFromMeal: s.saveTemplateFromMeal,
+      applyTemplate: s.applyTemplate,
       loadDay: s.loadDay,
       loadPlan: s.loadPlan,
       saveWeight: s.saveWeight,
@@ -59,6 +81,8 @@ export function FoodDayPage() {
   const prevDate = shiftDate(date, -1);
   const prevDay = useNutritionStore((s) => s.days[prevDate]);
   const [weightOpen, setWeightOpen] = useState(false);
+  const [savingMeal, setSavingMeal] = useState<Meal | null>(null);
+  const [applyingId, setApplyingId] = useState<number | null>(null);
 
   useBackButton(back);
   useMainButton('Добавить еду', () =>
@@ -70,6 +94,21 @@ export function FoodDayPage() {
     loadPlan(date);
     loadDay(shiftDate(date, -1));
   }, [date, loadDay, loadPlan]);
+
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
+
+  // Templates for the quick-add meal go first in the chip row (meal-less ones fit anywhere).
+  const quickTemplates = useMemo(
+    () => templates.filter((t) => t.meal === quickMeal || t.meal === null),
+    [templates, quickMeal],
+  );
+  const savingEntries = useMemo(
+    () => (savingMeal ? day?.entries.filter((e) => e.meal === savingMeal) ?? [] : []),
+    [savingMeal, day?.entries],
+  );
+  const hasMultiMeal = !!day && MEALS.some((m) => day.entries.filter((e) => e.meal === m.key).length >= 2);
 
   // Model targets override the static goal: today's kcal (training-day aware) and protein.
   const effectiveGoal = useMemo<NutritionGoal | null>(() => {
@@ -122,6 +161,14 @@ export function FoodDayPage() {
     toast(`${f.food.name} · ${fmt(f.grams)} г добавлено`, {
       actions: [{ label: 'Отменить', onClick: () => removeEntry(entry) }],
     });
+  };
+
+  const quickTemplate = async (id: number) => {
+    if (applyingId !== null) return;
+    setApplyingId(id);
+    const created = await applyTemplate(id, date, quickMeal);
+    setApplyingId(null);
+    haptic(created.length > 0 ? 'success' : 'warning');
   };
 
   const repeatMeal = async (meal: Meal) => {
@@ -245,10 +292,21 @@ export function FoodDayPage() {
         )}
 
         {/* Quick add: what you usually eat at this time */}
-        {frequent.length > 0 && (
+        {(frequent.length > 0 || quickTemplates.length > 0) && (
           <div className="mt-4">
             <div className="text-sm text-tg-hint mb-2 px-1">Частое на {mealLabel(quickMeal).toLowerCase()}</div>
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+              {quickTemplates.map((t) => (
+                <button
+                  key={`t${t.id}`}
+                  onClick={() => quickTemplate(t.id)}
+                  disabled={applyingId !== null}
+                  className="shrink-0 min-h-[40px] max-w-[220px] px-3 rounded-full text-sm font-medium active:opacity-70 truncate disabled:opacity-50"
+                  style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent)' }}
+                >
+                  🍽 {t.name} · {fmt(t.totals.kcal)} ккал
+                </button>
+              ))}
               {frequent.map((f) => (
                 <button
                   key={f.food.id}
@@ -261,6 +319,8 @@ export function FoodDayPage() {
             </div>
           </div>
         )}
+
+        <TemplatesHint show={templatesLoaded && templates.length === 0 && hasMultiMeal} />
 
         {/* Meals */}
         <div className="flex flex-col gap-3 mt-4">
@@ -301,6 +361,14 @@ export function FoodDayPage() {
                   >
                     + Добавить
                   </button>
+                  {entries.length >= 2 && (
+                    <button
+                      onClick={() => setSavingMeal(meal.key)}
+                      className="min-h-[44px] px-4 flex items-center gap-1.5 text-sm text-tg-hint active:opacity-70"
+                    >
+                      <BookmarkPlus size={16} aria-hidden /> Сохранить как набор
+                    </button>
+                  )}
                   {entries.length === 0 && prevDay?.entries.some((e) => e.meal === meal.key) && (
                     <button
                       onClick={() => repeatMeal(meal.key)}
@@ -359,6 +427,21 @@ export function FoodDayPage() {
           removeEntry(editing);
           haptic('medium');
           setEditing(null);
+        }}
+      />
+
+      <SaveTemplateSheet
+        meal={savingMeal}
+        entries={savingEntries}
+        onClose={() => setSavingMeal(null)}
+        onSave={async (name) => {
+          if (!savingMeal) return false;
+          const tpl = await saveTemplateFromMeal(date, savingMeal, name);
+          if (!tpl) return false;
+          markTemplatesHintSeen();
+          haptic('success');
+          toast(`Набор «${tpl.name}» сохранён`);
+          return true;
         }}
       />
 

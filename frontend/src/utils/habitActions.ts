@@ -4,6 +4,7 @@ import { toast, type ToastAction } from '../stores/toastStore';
 import { haptic } from '../hooks/useTelegramButtons';
 import { toDateString } from './dates';
 import { formatHours, isClosedOn, isCountHabit, isDoneValue, isHoursHabit, isMarkedOn, isReturningUser, isSkippedOn } from './habits';
+import { computeEarned, unlockNew, type Achievement } from './achievements';
 import type { Habit } from '../types';
 
 export const INTENSITY_LABELS = ['Легко', 'Средне', 'Тяжело'] as const;
@@ -44,6 +45,25 @@ function noMarksOn(habits: Habit[], date: string): boolean {
 }
 
 /**
+ * Runs a store write and, once the server has confirmed it, calls `onUnlocked` with the achievements
+ * it unlocked (compared before / after). A failed (rolled back) write unlocks, remembers and posts nothing.
+ */
+function withAchievements(write: () => Promise<boolean>, onUnlocked: (list: Achievement[]) => void) {
+  const before = computeEarned(useHabitsStore.getState().habits);
+  void write().then((ok) => {
+    if (!ok) return;
+    const unlocked = unlockNew(before, computeEarned(useHabitsStore.getState().habits));
+    if (unlocked.length > 0) onUnlocked(unlocked);
+  });
+}
+
+function achievementText(list: Achievement[]): string {
+  return list.length === 1
+    ? `🏅 Новое достижение: ${list[0]!.title}`
+    : `🏅 Новые достижения: ${list.map((a) => a.title).join(', ')}`;
+}
+
+/**
  * Sets a habit's value for a date and shows a toast with "Отменить"
  * (an accidental tap is undone in one tap instead of silently changing history).
  * A fresh mark of an intensity habit also offers Легко / Средне / Тяжело right in the toast.
@@ -58,23 +78,32 @@ export function setHabitValue(habit: Habit, date: string, value: number, { askIn
   // First mark of today after a 3+ day break (soft return, plan §3.6).
   const comeback =
     !firstEver && date === today && isDoneValue(habit, value) && noMarksOn(habits, today) && isReturningUser(habits, today);
-  toggleEntry(habit.id, date, value);
-  haptic(value > 0 ? 'light' : 'select');
-
-  const undo: ToastAction = { label: 'Отменить', onClick: () => toggleEntry(habit.id, date, prev, prevSkipped) };
+  const undo: ToastAction = { label: 'Отменить', onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped) };
   const offerIntensity = askIntensity && hasIntensity(habit) && prev === 0 && value > 0;
   const actions = offerIntensity
     ? [
         ...INTENSITY_LABELS.map((label, i) => ({
           label,
           onClick: () => {
-            toggleEntry(habit.id, date, i + 1);
+            void toggleEntry(habit.id, date, i + 1);
             haptic('select');
           },
         })),
         undo,
       ]
     : [undo];
+
+  // Badges only after the server saved the mark; the first-ever toast already celebrates «Первая отметка».
+  withAchievements(
+    () => toggleEntry(habit.id, date, value),
+    (unlocked) => {
+      if (firstEver) return;
+      haptic('success');
+      toast(achievementText(unlocked), { actions, ms: 6000 });
+    },
+  );
+  haptic(value > 0 ? 'light' : 'select');
+
   if (comeback) {
     haptic('success');
     toast('Снова в деле 💪', { actions, ms: 6000 });
@@ -102,9 +131,9 @@ export function setHabitSkipped(habit: Habit, date: string, skipped: boolean) {
   const prev = valueOn(habit, date);
   const prevSkipped = isSkippedOn(habit, date);
   if (prevSkipped === skipped) return;
-  toggleEntry(habit.id, date, 0, skipped);
+  void toggleEntry(habit.id, date, 0, skipped);
   haptic('select');
-  const undo: ToastAction = { label: 'Отменить', onClick: () => toggleEntry(habit.id, date, prev, prevSkipped) };
+  const undo: ToastAction = { label: 'Отменить', onClick: () => void toggleEntry(habit.id, date, prev, prevSkipped) };
   toast(skipped ? 'Пропуск — серия сохранится' : `«${habit.name}»: пропуск отменён`, { actions: [undo], ms: 5000 });
 }
 
@@ -134,18 +163,22 @@ export function markAll(habits: Habit[], date: string, label: string) {
     .filter((h) => !isHoursHabit(h) && !isClosedOn(h, date))
     .map((h) => ({ id: h.id, prev: valueOn(h, date), next: isCountHabit(h) ? countTarget(h) : 1 }));
   if (batch.length === 0) return;
-  for (const b of batch) toggleEntry(b.id, date, b.next);
-  haptic('light');
-  toast(`${label}: отмечено ${batch.length}`, {
-    actions: [
-      {
-        label: 'Отменить',
-        onClick: () => {
-          for (const b of batch) toggleEntry(b.id, date, b.prev);
-          haptic('select');
-        },
+  const actions: ToastAction[] = [
+    {
+      label: 'Отменить',
+      onClick: () => {
+        for (const b of batch) void toggleEntry(b.id, date, b.prev);
+        haptic('select');
       },
-    ],
-    ms: 5000,
-  });
+    },
+  ];
+  withAchievements(
+    async () => (await Promise.all(batch.map((b) => toggleEntry(b.id, date, b.next)))).every(Boolean),
+    (unlocked) => {
+      haptic('success');
+      toast(achievementText(unlocked), { actions, ms: 5000 });
+    },
+  );
+  haptic('light');
+  toast(`${label}: отмечено ${batch.length}`, { actions, ms: 5000 });
 }

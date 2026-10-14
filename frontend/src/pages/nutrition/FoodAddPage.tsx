@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import { Trash2 } from 'lucide-react';
 import { useNavStore } from '../../stores/navStore';
 import { useNutritionStore } from '../../stores/nutritionStore';
 import { PortionSheet, type PortionTarget } from '../../components/nutrition/PortionSheet';
@@ -9,13 +10,14 @@ import { useAuthStore } from '../../stores/authStore';
 import { useBackButton, useMainButton, haptic } from '../../hooks/useTelegramButtons';
 import { fetchMyFoods, searchFoods } from '../../api/nutrition';
 import { NUTRITION_COLOR, fmt, foodSourceLabel, mealLabel } from '../../utils/nutrition';
-import type { Food } from '../../types';
+import type { Food, MealTemplate } from '../../types';
 
-type Tab = 'search' | 'text';
+type Tab = 'search' | 'templates' | 'text';
 
 export function FoodAddPage() {
   const { foodDate: date, foodMeal, navigate } = useNavStore();
-  const { recent, loadRecent, addEntry, toggleFavorite } = useNutritionStore();
+  const { recent, loadRecent, addEntry, toggleFavorite, templates, templatesLoaded, loadTemplates, applyTemplate, deleteTemplate } =
+    useNutritionStore();
   // Star state for foods shown here (search results / mine aren't in the store).
   const [favOverride, setFavOverride] = useState<Record<number, boolean>>({});
   const isFav = (f: Food) => favOverride[f.id] ?? f.favorite;
@@ -36,6 +38,24 @@ export function FoodAddPage() {
   const back = useNavStore((s) => s.back);
   useBackButton(back);
   useMainButton(null, () => {});
+
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
+
+  const [applying, setApplying] = useState(false);
+  const addTemplate = async (t: MealTemplate) => {
+    if (applying) return;
+    setApplying(true);
+    const created = await applyTemplate(t.id, date, foodMeal);
+    setApplying(false);
+    if (created.length > 0) {
+      haptic('success');
+      back();
+    } else {
+      haptic('warning');
+    }
+  };
 
   useEffect(() => {
     loadRecent();
@@ -97,13 +117,13 @@ export function FoodAddPage() {
         <h1 className="text-xl font-bold text-tg-text mb-3">Добавить: {mealLabel(foodMeal).toLowerCase()}</h1>
 
         {/* Tabs (the agent tab is developer-only) */}
-        {agentLog && (
           <div className="flex bg-tg-section rounded-xl p-1 mb-4">
             {(
               [
                 ['search', '🔍 Поиск'],
-                ['text', '✨ Текстом'],
-              ] as const
+                ['templates', templates.length ? `🍽 Наборы · ${templates.length}` : '🍽 Наборы'],
+                ...(agentLog ? [['text', '✨ Текстом']] : []),
+              ] as [Tab, string][]
             ).map(([key, label]) => (
               <button
                 key={key}
@@ -118,9 +138,19 @@ export function FoodAddPage() {
               </button>
             ))}
           </div>
-        )}
 
-        {tab === 'search' || !agentLog ? (
+        {tab === 'templates' ? (
+          <TemplatesList
+            templates={templates}
+            loaded={templatesLoaded}
+            disabled={applying}
+            onPick={addTemplate}
+            onDelete={(t) => {
+              deleteTemplate(t.id);
+              haptic('medium');
+            }}
+          />
+        ) : tab === 'search' || !agentLog ? (
           <>
             <input
               autoFocus
@@ -191,6 +221,91 @@ export function FoodAddPage() {
         }}
       />
     </motion.div>
+  );
+}
+
+function TemplatesList({
+  templates,
+  loaded,
+  disabled,
+  onPick,
+  onDelete,
+}: {
+  templates: MealTemplate[];
+  loaded: boolean;
+  disabled: boolean;
+  onPick: (t: MealTemplate) => void;
+  onDelete: (t: MealTemplate) => void;
+}) {
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+
+  if (!loaded) return <p className="text-sm text-tg-hint text-center py-6">Загружаю…</p>;
+  if (templates.length === 0) {
+    return (
+      <div className="text-center py-8 px-4">
+        <div className="text-3xl mb-2" aria-hidden>
+          🍽
+        </div>
+        <p className="text-sm text-tg-text">Ешь одно и то же? Сохрани приём как набор — потом одним тапом</p>
+        <p className="text-xs text-tg-hint mt-2">
+          В дневнике у приёма пищи с двумя и больше продуктами есть кнопка «Сохранить как набор»
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {templates.map((t) =>
+        confirmId === t.id ? (
+          <div key={t.id} className="flex items-center gap-2 bg-tg-section rounded-xl pl-4 pr-1.5 py-1.5">
+            <span className="flex-1 min-w-0 text-sm text-tg-text truncate">Удалить «{t.name}»?</span>
+            <button
+              onClick={() => setConfirmId(null)}
+              className="min-h-[40px] px-3 rounded-lg text-sm text-tg-text active:opacity-60"
+            >
+              Нет
+            </button>
+            <button
+              onClick={() => {
+                setConfirmId(null);
+                onDelete(t);
+              }}
+              className="min-h-[40px] px-3 rounded-lg text-sm font-medium text-white active:opacity-80"
+              style={{ backgroundColor: 'var(--tg-theme-destructive-text-color, #e5484d)' }}
+            >
+              Удалить
+            </button>
+          </div>
+        ) : (
+          <div key={t.id} className="flex items-center bg-tg-section rounded-xl">
+            <button
+              onClick={() => onPick(t)}
+              disabled={disabled}
+              className="flex-1 min-w-0 px-4 py-2.5 text-left active:opacity-70 disabled:opacity-50"
+            >
+              <div className="flex items-baseline gap-2">
+                <span className="flex-1 min-w-0 text-sm font-medium text-tg-text truncate">{t.name}</span>
+                <span className="shrink-0 text-sm text-tg-text">{fmt(t.totals.kcal)} ккал</span>
+              </div>
+              <div className="text-xs text-tg-hint line-clamp-2">
+                {t.items.map((i) => `${i.name} ${fmt(i.grams)} г`).join(' · ')}
+              </div>
+              <div className="text-xs text-tg-hint">
+                Б {fmt(t.totals.protein)} · Ж {fmt(t.totals.fat)} · У {fmt(t.totals.carbs)}
+              </div>
+            </button>
+            <button
+              onClick={() => setConfirmId(t.id)}
+              aria-label={`Удалить набор «${t.name}»`}
+              className="w-11 h-11 shrink-0 flex items-center justify-center text-tg-hint active:opacity-60"
+            >
+              <Trash2 size={18} aria-hidden />
+            </button>
+          </div>
+        ),
+      )}
+    </div>
   );
 }
 

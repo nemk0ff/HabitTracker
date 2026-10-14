@@ -43,9 +43,38 @@ function openTrackerOptions() {
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
+/**
+ * `/start ref_<id>` (invite link `t.me/<bot>?start=ref_<id>`) from someone not registered yet: create them
+ * attributed to the inviter (a `startapp=ref_<id>` start_param is handled in routes/auth.ts). Returns the new user's id, or null.
+ */
+async function registerReferred(from: { id: number; first_name: string; last_name?: string; username?: string }, payload: string) {
+  const { resolveReferrer } = await import('./referral.js');
+  const referrerId = await resolveReferrer(payload, null);
+  if (referrerId === null) return null;
+  try {
+    const user = await prisma.user.create({
+      data: {
+        telegramId: BigInt(from.id),
+        firstName: from.first_name,
+        lastName: from.last_name ?? null,
+        username: from.username ?? null,
+        canMessage: true,
+        referrerId,
+      },
+    });
+    track({ userId: user.id, event: 'user_registered', category: 'bot', metadata: { referrerId } });
+    return user.id;
+  } catch (e) {
+    console.error('[bot] referred registration failed:', e); // e.g. a parallel /auth created the user first
+    return resolveUserId(from.id);
+  }
+}
+
 bot.command('start', async (ctx) => {
-  const userId = await resolveUserId(ctx.from?.id);
-  track({ userId, event: 'command_start', category: 'bot' });
+  let userId = await resolveUserId(ctx.from?.id);
+  const payload = typeof ctx.match === 'string' ? ctx.match.trim() : '';
+  if (userId === null && ctx.from && payload) userId = await registerReferred(ctx.from, payload);
+  track({ userId, event: 'command_start', category: 'bot', ...(payload && { label: payload.slice(0, 40) }) });
   // The user wrote to the bot, so it can write back (reopens a channel closed by an earlier 403).
   if (userId !== null) {
     await prisma.user.update({ where: { id: userId }, data: { canMessage: true } }).catch((e) => console.error('[bot] canMessage on /start:', e));
