@@ -36,6 +36,7 @@ import {
 import { computePlan, type PlanPhase } from './nutrition/model.js';
 import { compactHHMM, fmtKg } from './nutrition/prompts.js';
 import { isHHMM, sleepMinutes } from './sleep.js';
+import { nearestGoalLine } from './dashboard.js';
 
 const WEBAPP_URL = process.env.WEBAPP_URL || '';
 
@@ -65,6 +66,8 @@ export interface MorningData {
   weight: { todayKg: number | null; lastKg: number | null } | null;
   /** Null without a linked sleep habit. */
   sleep: { logged: { bed: string | null; wake: string | null; minutes: number } | null; presets: BedWake[] } | null;
+  /** «🎯 …» summary of the active quarter goal with the nearest deadline. */
+  goalLine?: string | null;
 }
 
 export interface ProteinSuggestion {
@@ -195,6 +198,10 @@ export function buildMorningBriefing(d: MorningData): CheckinMessage {
     lines.push('');
     if (plan) lines.push(`Сегодня: ${plan}`);
     if (t.phase) lines.push(phaseLine(t.phase));
+  }
+  if (d.goalLine) {
+    if (!d.today) lines.push('');
+    lines.push(d.goalLine);
   }
 
   const keyboard: Keyboard = [];
@@ -327,6 +334,10 @@ export async function loadMorningData(userId: number, date: string): Promise<Mor
     entries: loaded.entries,
     weight: null,
     sleep: null,
+    goalLine: await nearestGoalLine(userId, date).catch((e) => {
+      console.error('[briefing] goal line failed:', e);
+      return null;
+    }),
   };
 
   if (goal) {

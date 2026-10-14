@@ -198,6 +198,16 @@ export function weightTrend(weights: { date: string; weightKg: number }[], until
   return out;
 }
 
+/**
+ * Complete diary days among `days` (logged days, kcal > 0): an explicit DayMark wins; unmarked days count
+ * when ≥ 60% of the median intake of `days` (partially logged days would drag averages down).
+ */
+export function completeIntakeDays<T extends { date: string; kcal: number }>(days: T[], marked: ReadonlyMap<string, boolean>): T[] {
+  const sortedKcal = days.map((d) => d.kcal).sort((a, b) => a - b);
+  const median = sortedKcal.length ? sortedKcal[Math.floor(sortedKcal.length / 2)]! : 0;
+  return days.filter((d) => marked.get(d.date) ?? d.kcal >= median * 0.6);
+}
+
 export async function computePlan(userId: number, date: string): Promise<Plan & { trend: TrendPoint[] }> {
   const windowStart = addDays(date, -WINDOW_DAYS);
   const goal = await prisma.nutritionGoal.findUnique({ where: { userId } });
@@ -246,11 +256,7 @@ export async function computePlan(userId: number, date: string): Promise<Plan & 
   const pastDays = days
     .map((d) => ({ date: day(d.date), kcal: d._sum.kcal ?? 0, protein: d._sum.protein ?? 0 }))
     .filter((d) => d.date < date && d.kcal > 0);
-  const sortedKcal = pastDays.map((d) => d.kcal).sort((a, b) => a - b);
-  const median = sortedKcal.length ? sortedKcal[Math.floor(sortedKcal.length / 2)]! : 0;
-  // Explicit "день полный" marks win; unmarked days fall back to the 60%-of-median heuristic.
-  const marked = new Map(marks.map((m) => [day(m.date), m.complete]));
-  const complete = pastDays.filter((d) => marked.get(d.date) ?? d.kcal >= median * 0.6);
+  const complete = completeIntakeDays(pastDays, new Map(marks.map((m) => [day(m.date), m.complete])));
   const avgIntake = complete.length ? complete.reduce((s, d) => s + d.kcal, 0) / complete.length : null;
 
   // ─── Adaptive TDEE ─────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { ChevronRight, Plus, Utensils, Scale, NotebookText, Settings } from 'lucide-react';
+import { ChartLine, ChevronRight, Plus, Utensils, Scale, NotebookText, Settings } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useHabitsStore } from '../stores/habitsStore';
 import { useNavStore } from '../stores/navStore';
@@ -159,6 +159,7 @@ export function TodayPage() {
               onFood={() => navigate('food-day', { foodDate: today })}
               onHabits={() => habitsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
               onSleep={sleepHabit ? () => openHabit(sleepHabit.id) : undefined}
+              onDashboard={() => navigate('dashboard')}
             />
             {active.length > 0 && dueToday === 0 && <p className="text-sm text-tg-hint mt-1.5">Сегодня пропуск</p>}
             {closed && (
@@ -167,13 +168,22 @@ export function TodayPage() {
               </p>
             )}
           </div>
-          <button
-            onClick={() => navigate('settings')}
-            aria-label="Настройки"
-            className="w-11 h-11 -mr-2 shrink-0 rounded-xl flex items-center justify-center text-tg-hint active:opacity-60"
-          >
-            <Settings size={22} aria-hidden />
-          </button>
+          <div className="flex shrink-0 -mr-2">
+            <button
+              onClick={() => navigate('dashboard')}
+              aria-label="Дашборд"
+              className="w-11 h-11 rounded-xl flex items-center justify-center text-tg-hint active:opacity-60"
+            >
+              <ChartLine size={22} aria-hidden />
+            </button>
+            <button
+              onClick={() => navigate('settings')}
+              aria-label="Настройки"
+              className="w-11 h-11 rounded-xl flex items-center justify-center text-tg-hint active:opacity-60"
+            >
+              <Settings size={22} aria-hidden />
+            </button>
+          </div>
         </div>
 
         {/* The day's main block: what's left to eat + weight */}
@@ -330,6 +340,7 @@ function StatusLine({
   onFood,
   onHabits,
   onSleep,
+  onDashboard,
 }: {
   kcalLeft: number | null;
   proteinLeft: number | null;
@@ -340,7 +351,17 @@ function StatusLine({
   onFood: () => void;
   onHabits: () => void;
   onSleep?: () => void;
+  /** Long-press on the line or the trailing «›» opens the dashboard. */
+  onDashboard: () => void;
 }) {
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressed = useRef(false);
+  const cancelPress = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+  useEffect(() => cancelPress, []);
+
   const parts: { key: string; text: string; label: string; color?: string; onClick?: () => void }[] = [];
   if (kcalLeft !== null) {
     parts.push({
@@ -374,7 +395,30 @@ function StatusLine({
   if (parts.length === 0) return null;
 
   return (
-    <div className="mt-1.5 flex flex-wrap items-center text-[15px] text-tg-text tabular-nums leading-tight">
+    <div
+      className="mt-1.5 flex flex-wrap items-center text-[15px] text-tg-text tabular-nums leading-tight select-none"
+      onPointerDown={() => {
+        longPressed.current = false;
+        cancelPress();
+        pressTimer.current = setTimeout(() => {
+          longPressed.current = true;
+          haptic('medium');
+          onDashboard();
+        }, 500);
+      }}
+      onPointerUp={cancelPress}
+      onPointerLeave={cancelPress}
+      onPointerCancel={cancelPress}
+      onContextMenu={(e) => e.preventDefault()}
+      onClickCapture={(e) => {
+        // The click ending a long-press must not also open the part under the finger.
+        if (longPressed.current) {
+          e.stopPropagation();
+          e.preventDefault();
+          longPressed.current = false;
+        }
+      }}
+    >
       {parts.map((p, i) => (
         <span key={p.key} className="inline-flex items-center">
           {i > 0 && <span className="text-tg-hint px-1.5" aria-hidden>·</span>}
@@ -387,6 +431,13 @@ function StatusLine({
           )}
         </span>
       ))}
+      <button
+        onClick={onDashboard}
+        aria-label="Дашборд"
+        className="min-h-[32px] min-w-[28px] pl-1.5 flex items-center text-tg-hint active:opacity-60"
+      >
+        <ChevronRight size={18} aria-hidden />
+      </button>
     </div>
   );
 }

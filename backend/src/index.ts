@@ -10,6 +10,7 @@ import { reminderRoutes } from './routes/reminders.js';
 import { claudeSessionRoutes } from './routes/claudeSession.js';
 import { nutritionRoutes } from './routes/nutrition.js';
 import { meRoutes } from './routes/me.js';
+import { dashboardRoutes } from './routes/dashboard.js';
 import { startScheduler } from './services/scheduler.js';
 import { bot, startBot } from './services/bot.js';
 import { startAlerts } from './services/alerts.js';
@@ -33,6 +34,7 @@ app.register(reminderRoutes, { prefix: '/api' });
 app.register(claudeSessionRoutes, { prefix: '/api' });
 app.register(nutritionRoutes, { prefix: '/api' });
 app.register(meRoutes, { prefix: '/api' });
+app.register(dashboardRoutes, { prefix: '/api' });
 
 app.get('/api/health', async () => ({ status: 'ok' }));
 

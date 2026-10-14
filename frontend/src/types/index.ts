@@ -76,7 +76,8 @@ export type Screen =
   | 'food-product'
   | 'food-stats'
   | 'food-goal'
-  | 'food-suggest';
+  | 'food-suggest'
+  | 'dashboard';
 
 // ─── Nutrition ────────────────────────────────────────────────────────────────
 
@@ -218,4 +219,54 @@ export interface PlanPhase {
   plannedRateKgWeek: number | null;
   actualRateKgWeek: number | null;
   onTrack: 'ahead' | 'on' | 'behind' | null;
+}
+
+// ─── Dashboard & quarter goals (plans/14-10-2026-iteration-C.md) ────────────
+
+export type QuarterGoalMetric = 'weight' | 'trainings' | 'sleep_share' | 'habit_count' | 'protein_days';
+
+export interface QuarterGoal {
+  id: number;
+  title: string;
+  metric: QuarterGoalMetric;
+  /** weight: kg; trainings/habit_count/protein_days: count; sleep_share: percent of nights. */
+  target: number;
+  /** sleep_share: hours threshold; habit_count: habitId. */
+  param: number | null;
+  /** Local YYYY-MM-DD. */
+  deadline: string;
+  startDate: string;
+  startValue: number | null;
+  current: number | null;
+  /** 0..1 toward target. */
+  progress: number;
+  daysLeft: number;
+  status: 'done' | 'on' | 'behind' | 'unknown';
+  /** «74 кг к 1 января: осталось 3,6 кг за 79 дн · по графику». */
+  summary: string;
+}
+
+export interface DashboardWeek {
+  /** Monday, YYYY-MM-DD. */
+  weekStart: string;
+  kcalAvg: number | null;
+  kcalTarget: number | null;
+  proteinAvg: number | null;
+  proteinTarget: number | null;
+  completeDays: number;
+  sleepAvgMin: number | null;
+  bedtimeAvg: string | null;
+  bedtimeSpreadMin: number | null;
+  /** null when no training habit is linked in «Цель и вес». */
+  trainings: number | null;
+  trainingTarget: number | null;
+}
+
+export interface DashboardData {
+  weeks: DashboardWeek[];
+  weight: { points: { date: string; kg: number }[]; trend: { date: string; kg: number }[]; plan: { date: string; kg: number }[] };
+  phaseLine: string | null;
+  /** «Связи»: null when there's not enough data. */
+  links: { label: string; a: string; b: string; note: string }[] | null;
+  goals: QuarterGoal[];
 }

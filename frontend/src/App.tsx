@@ -16,6 +16,7 @@ import { FoodProductFormPage } from './pages/nutrition/FoodProductFormPage';
 import { FoodStatsPage } from './pages/nutrition/FoodStatsPage';
 import { FoodGoalPage } from './pages/nutrition/FoodGoalPage';
 import { FoodSuggestPage } from './pages/nutrition/FoodSuggestPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { LoadingScreen } from './components/LoadingScreen';
 
 export default function App() {
@@ -126,6 +127,7 @@ export default function App() {
       {screen === 'food-stats' && <FoodStatsPage key="food-stats" />}
       {screen === 'food-goal' && <FoodGoalPage key="food-goal" />}
       {screen === 'food-suggest' && <FoodSuggestPage key="food-suggest" />}
+      {screen === 'dashboard' && <DashboardPage key="dashboard" />}
     </AnimatePresence>
     <Toaster />
     {user && <ChallengeCelebration />}

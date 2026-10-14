@@ -39,6 +39,7 @@ model User {
   favorites     FavoriteFood[]
   dayMarks      DayMark[]
   mealTemplates MealTemplate[]
+  quarterGoals  QuarterGoal[]
 
   @@index([referrerId])
 }
@@ -236,6 +237,30 @@ model MealTemplate {
   /// JSON [{ "foodId": number, "grams": number }]
   items     String
   createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// «Цели на квартал» (plans/14-10-2026-iteration-C.md): progress is computed in services/dashboard.ts.
+model QuarterGoal {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// ≤ 60 chars
+  title      String
+  /// weight | trainings | sleep_share | habit_count | protein_days
+  metric     String
+  /// weight: kg; trainings/habit_count/protein_days: count; sleep_share: percent of nights
+  target     Float
+  /// sleep_share: hours threshold; habit_count: habitId
+  param      Float?
+  /// Local YYYY-MM-DD
+  deadline   String
+  startDate  String
+  /// weight: trend at creation; sleep_share: share over the 30 days before; counts: 0
+  startValue Float?
+  archived   Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   @@index([userId])
 }
